@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 
 import { POST } from "../../app/api/auth/login/route";
 import { SESSION_COOKIE, SESSION_TTL_SECONDS } from "../../src/lib/auth";
+import { CSRF_COOKIE, verifyCsrfToken } from "../../src/lib/csrf";
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -43,6 +44,28 @@ describe("POST /api/auth/login", () => {
     expect(cookie.toLowerCase()).toContain("samesite=lax");
     expect(cookie).toContain("Path=/");
     expect(cookie).toContain(`Max-Age=${SESSION_TTL_SECONDS}`);
+  });
+
+  it("issues a CSRF cookie alongside the session on success", async () => {
+    setEnv({ DASHBOARD_PASSWORD: "letmein", JWT_SECRET: "supersecret-key" });
+    const res = await POST(makeReq({ password: "letmein" }));
+    expect(res.status).toBe(200);
+    // NextResponse.cookies.set with multiple names produces multiple
+    // Set-Cookie entries that we can read individually via getSetCookie().
+    const cookies = res.headers.getSetCookie();
+    const session = cookies.find((c) => c.startsWith(`${SESSION_COOKIE}=`));
+    const csrf = cookies.find((c) => c.startsWith(`${CSRF_COOKIE}=`));
+    expect(session).toBeDefined();
+    expect(csrf).toBeDefined();
+    // CSRF cookie must be readable by client JS (NOT HttpOnly).
+    expect(csrf!.toLowerCase()).not.toContain("httponly");
+    expect(csrf!.toLowerCase()).toContain("samesite=lax");
+    expect(csrf!).toContain("Path=/");
+    expect(csrf!).toContain(`Max-Age=${SESSION_TTL_SECONDS}`);
+    // The cookie value must be a valid CSRF token under the secret.
+    const m = csrf!.match(new RegExp(`^${CSRF_COOKIE}=([^;]+)`));
+    expect(m).not.toBeNull();
+    expect(await verifyCsrfToken(m![1], "supersecret-key")).toBe(true);
   });
 
   it("returns 401 on wrong password without setting a cookie", async () => {
