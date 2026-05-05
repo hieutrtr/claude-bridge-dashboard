@@ -3,6 +3,7 @@
 // and v1 ARCH §10 (5/min/IP brute-force lockout).
 
 import { _resetBuckets, consume, createBucket, type Bucket } from "@/src/lib/rate-limit";
+import { appendAudit } from "@/src/server/audit";
 
 const DEFAULT_PER_MIN = 5;
 const STATE_KEY = "__bridge_rate_limit_login__";
@@ -40,6 +41,13 @@ export async function rateLimitLogin(req: Request): Promise<Response | null> {
   const key = clientIp(req) ?? "unknown";
   const result = consume(bucket, key);
   if (result.ok) return null;
+
+  appendAudit({
+    action: "rate_limit_blocked",
+    resourceType: "auth",
+    payload: { retryAfterSec: result.retryAfterSec, scope: "login" },
+    req,
+  });
 
   return new Response(
     JSON.stringify({ error: "rate_limited", retryAfterSec: result.retryAfterSec }),

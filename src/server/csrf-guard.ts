@@ -4,6 +4,7 @@
 
 import { readAuthEnv, timingSafeEqual } from "@/src/lib/auth";
 import { CSRF_COOKIE, CSRF_HEADER, verifyCsrfToken } from "@/src/lib/csrf";
+import { appendAudit } from "@/src/server/audit";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -19,18 +20,19 @@ export async function csrfGuard(req: Request): Promise<Response | null> {
   const headerToken = req.headers.get(CSRF_HEADER);
 
   if (!cookieToken || !headerToken) {
-    return invalid();
+    return invalid(req);
   }
   if (!timingSafeEqual(cookieToken, headerToken)) {
-    return invalid();
+    return invalid(req);
   }
   if (!(await verifyCsrfToken(cookieToken, secret))) {
-    return invalid();
+    return invalid(req);
   }
   return null;
 }
 
-function invalid(): Response {
+function invalid(req: Request): Response {
+  appendAudit({ action: "csrf_invalid", resourceType: "auth", req });
   return Response.json({ error: "csrf_invalid" }, { status: 403 });
 }
 

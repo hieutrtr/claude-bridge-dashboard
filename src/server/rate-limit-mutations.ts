@@ -4,6 +4,7 @@
 // docs/tasks/phase-2/T07-rate-limit.md.
 
 import { _resetBuckets, consume, createBucket, type Bucket } from "@/src/lib/rate-limit";
+import { appendAudit } from "@/src/server/audit";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const DEFAULT_PER_MIN = 30;
@@ -51,6 +52,14 @@ export async function rateLimitMutations(
   const key = sessionUserId ?? clientIp(req) ?? "unknown";
   const result = consume(bucket, key);
   if (result.ok) return null;
+
+  appendAudit({
+    action: "rate_limit_blocked",
+    resourceType: "mutation",
+    userId: sessionUserId,
+    payload: { retryAfterSec: result.retryAfterSec },
+    req,
+  });
 
   return new Response(
     JSON.stringify({ error: "rate_limited", retryAfterSec: result.retryAfterSec }),

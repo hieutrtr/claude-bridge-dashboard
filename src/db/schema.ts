@@ -158,6 +158,34 @@ export const loopIterations = sqliteTable("loop_iterations", {
 	index("idx_loop_iterations_loop").on(table.loopId),
 ]);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DASHBOARD-OWNED tables.
+// These are NOT vendored from the daemon's `bridge.db` schema. They are
+// created and maintained by `src/server/migrate.ts` and live alongside the
+// daemon-owned tables in the same SQLite file (per v1 ARCHITECTURE.md §3).
+// Re-running `bun run db:introspect` will surface them as drift — keep the
+// generated diff but do NOT delete this block.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const auditLog = sqliteTable("audit_log", {
+	id: integer().primaryKey({ autoIncrement: true }),
+	userId: text("user_id"),
+	action: text().notNull(),
+	resourceType: text("resource_type").notNull(),
+	resourceId: text("resource_id"),
+	payloadJson: text("payload_json"),
+	ipHash: text("ip_hash"),
+	userAgent: text("user_agent"),
+	requestId: text("request_id"),
+	createdAt: integer("created_at").notNull(),
+},
+(table) => [
+	index("idx_audit_log_created_at").on(table.createdAt),
+	index("idx_audit_log_user_created_at").on(table.userId, table.createdAt),
+]);
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export const schedules = sqliteTable("schedules", {
 	id: integer().primaryKey({ autoIncrement: true }),
 	name: text().notNull(),
