@@ -199,3 +199,19 @@ export interface TaskTranscript {
 export interface DispatchResult {
   taskId: number;
 }
+
+// T03 (Phase 2) — wire shape returned by `tasks.kill`. `ok` is always
+// true on a non-throw return; the procedure throws `NOT_FOUND` for an
+// unknown id and the various MCP error codes for transport / daemon
+// failures. `alreadyTerminated` distinguishes the two non-error paths:
+//
+//   alreadyTerminated=false → the dashboard saw the task as
+//     pending/queued/running/etc. and successfully called bridge_kill.
+//   alreadyTerminated=true  → either (a) the dashboard saw the task in
+//     a terminal status before calling MCP (no-op), or (b) the daemon
+//     reported "no running task / already terminated" (race window) —
+//     in both cases the user's intent (the task is dead) is satisfied.
+export interface KillResult {
+  ok: true;
+  alreadyTerminated: boolean;
+}

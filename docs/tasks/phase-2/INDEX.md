@@ -11,9 +11,9 @@
 >    write **and** the daemon-side post-MCP write, joined by `request_id`.
 > 5. Have a confirmation step for destructive actions (P2-T11).
 >
-> **Status:** Iter 6/15 — T12 (MCP pool), T08 (CSRF), T07 (rate-limit),
-> T04 (audit log), T01 (`tasks.dispatch` via MCP) landed. T02, T03, T05,
-> T06, T09..T11 + phase-test + sign-off remain.
+> **Status:** Iter 7/15 — T12 (MCP pool), T08 (CSRF), T07 (rate-limit),
+> T04 (audit log), T01 (`tasks.dispatch` via MCP), T03 (`tasks.kill` via
+> MCP) landed. T02, T05, T06, T09..T11 + phase-test + sign-off remain.
 
 ---
 
@@ -72,7 +72,7 @@ mitigation extracted from `docs/PHASE-2-REVIEW.md`) and a matching
 
 - [x] **T01 — `tasks.dispatch` via MCP** *(scope: tRPC mutation procedure that connects to the daemon over MCP stdio (`mcpEndpoint` from `config.json`), invokes tool `bridge_dispatch({ agent, prompt, model? })`, maps daemon errors to typed tRPC errors, returns `{ taskId }`. **No** `child_process` shelling out to `bridge` CLI. Includes Zod input schema + timeout (15s) + structured error → toast mapping.)* — Review risk: **High** (transport rewrite, framing/escape risk on multi-line prompts, race when 2 dashboard processes spawn stdio).
 - [ ] **T02 — Dispatch dialog UI (⌘K)** *(scope: client-side modal mounted globally, triggered by `⌘K` / button on `/agents`, with agent selector (`agents.list`) + textarea prompt + cost estimate placeholder. On submit calls `tasks.dispatch` mutation, shows toast linking to `/tasks/[id]`. shadcn `<Dialog>` + `<Command>` primitives.)* — Risk: **Low** (UI work; cost-estimate is rough).
-- [ ] **T03 — Kill task action** *(scope: `tasks.kill({ id })` tRPC mutation calling MCP `bridge_kill` for the task's agent. Idempotent (already-done → return ok with warning, not error). Kill button on `/tasks/[id]` for `running` tasks; status flips to `killed` in ≤ 2 s.)* — Risk: **Medium** (idempotency surface; UI lag → killing already-done task should not error confusingly).
+- [x] **T03 — Kill task action** *(scope: `tasks.kill({ id })` tRPC mutation calling MCP `bridge_kill` for the task's agent. Idempotent (already-done → return ok with warning, not error). Kill button on `/tasks/[id]` for `running` tasks; status flips to `killed` in ≤ 2 s.)* — Risk: **Medium** (idempotency surface; UI lag → killing already-done task should not error confusingly).
 - [x] **T04 — Audit log table & write helper** *(scope: SQLite migration for `audit_log(id, user_id, action, resource_type, resource_id, payload_json, ip_hash, user_agent, request_id, created_at)` matching v1 ARCH §3. `appendAudit({ ctx, action, resource, payload })` helper used by every mutation procedure. IP hash = SHA-256 + per-install salt (read once at boot).)* — Risk: **Low** (DB write). Cross-cutting dependency for T1/T3/T6/T9.
 - [ ] **T05 — Audit log viewer page** *(scope: `/audit` route, owner-only, virtualized table (5 000+ rows), filters by user/action/resource/date. Reuses `<TaskFilters>` URL-param pattern from Phase 1. `system.auditLog` query already declared in v1 §4.6 — implement here.)* — Risk: **Low** (reuse pattern from `/tasks`).
 - [ ] **T06 — Loop approve/reject inline** *(scope: in `/tasks/[id]` task detail, when the task is part of a loop in `pending_approval`, render Approve / Reject buttons. tRPC `loops.approve({ loopId })` / `loops.reject({ loopId, reason? })` mutations call MCP `bridge_loop_approve` / `bridge_loop_reject`. **Server-confirmed UI** — no optimistic update for this mutation per review §d.1.)* — Risk: **High** (race: same loop approved on web + rejected on Telegram simultaneously; daemon needs `BEGIN IMMEDIATE` or compare-and-swap).

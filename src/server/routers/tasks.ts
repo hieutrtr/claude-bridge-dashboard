@@ -27,11 +27,13 @@ import { publicProcedure, router } from "../trpc";
 import { getDb } from "../db";
 import { agents, tasks } from "../../db/schema";
 import { appendAudit } from "../audit";
+import { McpPoolError } from "../mcp/pool";
 import { auditFailureCode, mapMcpErrorToTrpc } from "../mcp/errors";
 import type {
   AgentTaskPage,
   DispatchResult,
   GlobalTaskPage,
+  KillResult,
   TaskDetail,
   TaskTranscript,
 } from "../dto";
@@ -129,6 +131,31 @@ function extractTaskId(value: unknown): number | null {
   const tid = (value as BridgeDispatchResult).task_id;
   return typeof tid === "number" && Number.isFinite(tid) && tid > 0 ? tid : null;
 }
+
+// P2-T03 — `tasks.kill` input. `id` is the autoincrement `tasks.id`; the
+// procedure resolves it to an agent name via the existing left-join.
+//
+// Note: zod's `z.number().int()` rejects NaN and non-integer floats; we
+// pair it with `.positive()` so 0 and negatives also bounce as
+// `BAD_REQUEST` rather than reaching the lookup.
+const KillInput = z.object({
+  id: z.number().int().positive(),
+});
+
+const KILL_TIMEOUT_MS = 15_000;
+
+// `tasks.status` values the daemon writes when a task is no longer
+// runnable. Hitting any of these short-circuits the kill (no MCP call,
+// just an audit row recording the no-op).
+const TERMINAL_STATUSES = new Set(["done", "failed", "killed"]);
+
+// Daemon-reported messages we treat as a benign race rather than a
+// failure. The match is intentionally narrow: "no running" / "not
+// running" / "already (done|terminated|killed|finished)". Generic
+// errors like "agent not found" or "connection refused" do **not**
+// match → they propagate as INTERNAL_SERVER_ERROR.
+const KILL_RACE_PATTERN =
+  /no.*running|not.*running|already.*(done|terminated|killed|finished)/i;
 
 const TASK_DETAIL_SELECTION = {
   id: tasks.id,
@@ -256,6 +283,128 @@ export const tasksRouter = router({
       });
 
       return { taskId };
+    }),
+
+  // P2-T03 — kill a running task by id. The daemon's `bridge_kill` MCP
+  // tool kills *the running task on an agent* (agent-scoped); the
+  // dashboard owns the task-id → agent-name resolution via the existing
+  // `tasks.session_id → agents.session_id` join.
+  //
+  // Idempotency contract (per acceptance criterion 4 + 6 in
+  // `docs/tasks/phase-2/T03-kill.md`):
+  //
+  //   1. Server-side terminal check: if the row is already
+  //      done/failed/killed, return `alreadyTerminated:true` without
+  //      calling MCP. Avoids spamming the daemon with no-op kills when
+  //      a stale browser tab re-renders.
+  //   2. Daemon race: if the daemon reports "no running task" /
+  //      "already terminated" via MCP_RPC_ERROR, swallow → return
+  //      `alreadyTerminated:true` (with `raceDetected:true` on the
+  //      audit row for forensics).
+  //
+  // Both paths audit; no path is silent.
+  kill: publicProcedure
+    .input(KillInput)
+    .mutation(async ({ input, ctx }): Promise<KillResult> => {
+      if (!ctx.mcp) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "MCP client not configured on tRPC context",
+        });
+      }
+
+      const db = getDb();
+      const row = db
+        .select({ status: tasks.status, agentName: agents.name })
+        .from(tasks)
+        .leftJoin(agents, eq(tasks.sessionId, agents.sessionId))
+        .where(eq(tasks.id, input.id))
+        .limit(1)
+        .all()[0];
+      if (!row) {
+        // Probes against unknown ids do *not* generate audit rows —
+        // matches `tasks.get` which returns null rather than throwing
+        // for queries. The mutation surface uses NOT_FOUND so the
+        // client can show a "task vanished" toast.
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "task not found",
+        });
+      }
+
+      const auditBase = {
+        resourceType: "task" as const,
+        resourceId: String(input.id),
+        userId: ctx.userId ?? null,
+        req: ctx.req,
+      };
+
+      // Path A — server-side terminal check, no MCP call.
+      if (row.status && TERMINAL_STATUSES.has(row.status)) {
+        appendAudit({
+          ...auditBase,
+          action: "task.kill",
+          payload: {
+            agentName: row.agentName,
+            status: row.status,
+            alreadyTerminated: true,
+          },
+        });
+        return { ok: true, alreadyTerminated: true };
+      }
+
+      // Path B — call the daemon. `agentName` is null only for orphan
+      // tasks (agent deleted but task row survived); we still pass the
+      // empty string and let the daemon surface the "agent not found"
+      // error → maps to INTERNAL_SERVER_ERROR. Edge case noted in spec.
+      const agentName = row.agentName ?? "";
+      try {
+        await ctx.mcp.call(
+          "bridge_kill",
+          { agent: agentName },
+          { timeoutMs: KILL_TIMEOUT_MS },
+        );
+      } catch (err) {
+        // Race: daemon says the task isn't running anymore. Audit and
+        // return success; the user's intent is satisfied either way.
+        if (
+          err instanceof McpPoolError &&
+          err.code === "MCP_RPC_ERROR" &&
+          KILL_RACE_PATTERN.test(err.message)
+        ) {
+          appendAudit({
+            ...auditBase,
+            action: "task.kill",
+            payload: {
+              agentName: row.agentName,
+              status: row.status,
+              alreadyTerminated: true,
+              raceDetected: true,
+            },
+          });
+          return { ok: true, alreadyTerminated: true };
+        }
+        appendAudit({
+          ...auditBase,
+          action: "task.kill.error",
+          payload: {
+            agentName: row.agentName,
+            code: auditFailureCode(err),
+          },
+        });
+        throw mapMcpErrorToTrpc(err);
+      }
+
+      appendAudit({
+        ...auditBase,
+        action: "task.kill",
+        payload: {
+          agentName: row.agentName,
+          status: row.status,
+          alreadyTerminated: false,
+        },
+      });
+      return { ok: true, alreadyTerminated: false };
     }),
 
   listByAgent: publicProcedure
