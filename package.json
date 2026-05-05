@@ -1,0 +1,43 @@
+{
+  "name": "@claude-bridge/dashboard",
+  "version": "0.1.0",
+  "description": "Web dashboard for claude-bridge — observe agents, tasks, loops, and schedules.",
+  "private": false,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "db:introspect": "bun run scripts/introspect.ts"
+  },
+  "dependencies": {
+    "@trpc/client": "^11.0.0",
+    "@trpc/server": "^11.0.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "drizzle-orm": "^0.40.0",
+    "next": "^15.0.0",
+    "next-themes": "^0.4.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwind-merge": "^2.5.5",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.0.0",
+    "@types/bun": "latest",
+    "@types/node": "^20.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@libsql/client": "^0.14.0",
+    "drizzle-kit": "^0.30.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "license": "MIT"
+}
