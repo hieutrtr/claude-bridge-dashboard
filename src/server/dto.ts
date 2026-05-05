@@ -215,3 +215,27 @@ export interface KillResult {
   ok: true;
   alreadyTerminated: boolean;
 }
+
+// T06 (Phase 2) — wire shape returned by `loops.approve` and
+// `loops.reject`. Same idempotency contract as `KillResult`:
+//
+//   alreadyFinalized=false → the dashboard saw `pending_approval=true`
+//     and successfully called the daemon's MCP tool.
+//   alreadyFinalized=true  → either (a) the row's pending_approval was
+//     already false at lookup (server-side check), or (b) the daemon
+//     reported "already approved/rejected/finalized" via MCP_RPC_ERROR
+//     (multi-channel race) — both cases mean the loop is resolved and
+//     the user's intent is satisfied.
+//
+// Two distinct types (vs one shared) so a future per-mutation
+// extension (e.g. echoing iteration count) doesn't ripple across both
+// procedures.
+export interface LoopApproveResult {
+  ok: true;
+  alreadyFinalized: boolean;
+}
+
+export interface LoopRejectResult {
+  ok: true;
+  alreadyFinalized: boolean;
+}
