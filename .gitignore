@@ -26,3 +26,8 @@ next-env.d.ts
 .tmp-introspect.db
 .tmp-introspect.db-wal
 .tmp-introspect.db-shm
+
+# Playwright (T13) — fixture lives under os.tmpdir(), but artifacts
+# from failed runs land here.
+playwright-report/
+test-results/
