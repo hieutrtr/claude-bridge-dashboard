@@ -13,8 +13,16 @@ function setEnv(over: Record<string, string | undefined>) {
   }
 }
 
-beforeEach(() => {
-  setEnv({ DASHBOARD_PASSWORD: undefined, JWT_SECRET: undefined });
+beforeEach(async () => {
+  setEnv({
+    DASHBOARD_PASSWORD: undefined,
+    JWT_SECRET: undefined,
+    RATE_LIMIT_LOGIN_PER_MIN: undefined,
+  });
+  // Reset the login bucket between tests so a previous test's exhaustion
+  // does not bleed into the next.
+  const m = await import("../../src/server/rate-limit-login");
+  m._reset();
 });
 
 afterEach(() => {
@@ -22,13 +30,17 @@ afterEach(() => {
   setEnv({
     DASHBOARD_PASSWORD: ORIGINAL_ENV.DASHBOARD_PASSWORD,
     JWT_SECRET: ORIGINAL_ENV.JWT_SECRET,
+    RATE_LIMIT_LOGIN_PER_MIN: ORIGINAL_ENV.RATE_LIMIT_LOGIN_PER_MIN,
   });
 });
 
-function makeReq(body: unknown): Request {
+function makeReq(body: unknown, xff = "10.0.0.1"): Request {
   return new Request("http://localhost/api/auth/login", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "x-forwarded-for": xff,
+    },
     body: typeof body === "string" ? body : JSON.stringify(body),
   });
 }
@@ -103,5 +115,28 @@ describe("POST /api/auth/login", () => {
     setEnv({ DASHBOARD_PASSWORD: "letmein", JWT_SECRET: undefined });
     const res = await POST(makeReq({ password: "letmein" }));
     expect(res.status).toBe(503);
+  });
+
+  it("returns 429 after 5 rapid attempts from the same IP (rate limit)", async () => {
+    setEnv({ DASHBOARD_PASSWORD: "letmein", JWT_SECRET: "supersecret-key" });
+    // 5 attempts (some wrong, some malformed) from the same IP all spend tokens
+    for (let i = 0; i < 5; i++) {
+      await POST(makeReq({ password: "wrong" }, "1.2.3.4"));
+    }
+    const res = await POST(makeReq({ password: "letmein" }, "1.2.3.4"));
+    expect(res.status).toBe(429);
+    expect(res.headers.get("set-cookie")).toBeNull();
+    const body = await res.json();
+    expect(body.error).toBe("rate_limited");
+    expect(Number(res.headers.get("Retry-After"))).toBeGreaterThan(0);
+  });
+
+  it("rate-limit applies before body parsing — malformed bodies still spend tokens", async () => {
+    setEnv({ DASHBOARD_PASSWORD: "letmein", JWT_SECRET: "supersecret-key" });
+    for (let i = 0; i < 5; i++) {
+      await POST(makeReq("not-json{", "5.6.7.8"));
+    }
+    const res = await POST(makeReq({ password: "letmein" }, "5.6.7.8"));
+    expect(res.status).toBe(429);
   });
 });

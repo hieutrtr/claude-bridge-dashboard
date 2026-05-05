@@ -9,10 +9,16 @@ import {
   timingSafeEqual,
 } from "@/src/lib/auth";
 import { CSRF_COOKIE, issueCsrfToken } from "@/src/lib/csrf";
+import { rateLimitLogin } from "@/src/server/rate-limit-login";
 
 const Body = z.object({ password: z.string().min(1) });
 
 export async function POST(req: Request): Promise<Response> {
+  // Rate-limit FIRST — before body parsing — so a flood of malformed
+  // requests still spends the bucket and cannot be used as an oracle.
+  const rateBlocked = await rateLimitLogin(req);
+  if (rateBlocked) return rateBlocked;
+
   const env = readAuthEnv();
   if (!env.password || !env.secret) {
     return NextResponse.json({ error: "auth_not_configured" }, { status: 503 });

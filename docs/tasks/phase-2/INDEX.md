@@ -11,8 +11,8 @@
 >    write **and** the daemon-side post-MCP write, joined by `request_id`.
 > 5. Have a confirmation step for destructive actions (P2-T11).
 >
-> **Status:** Iter 3/15 — T12 (MCP pool) + T08 (CSRF) landed. T01..T07,
-> T09..T11 + phase-test + sign-off remain.
+> **Status:** Iter 4/15 — T12 (MCP pool), T08 (CSRF), T07 (rate-limit)
+> landed. T01..T06, T09..T11 + phase-test + sign-off remain.
 
 ---
 
@@ -75,7 +75,7 @@ mitigation extracted from `docs/PHASE-2-REVIEW.md`) and a matching
 - [ ] **T04 — Audit log table & write helper** *(scope: SQLite migration for `audit_log(id, user_id, action, resource_type, resource_id, payload_json, ip_hash, user_agent, request_id, created_at)` matching v1 ARCH §3. `appendAudit({ ctx, action, resource, payload })` helper used by every mutation procedure. IP hash = SHA-256 + per-install salt (read once at boot).)* — Risk: **Low** (DB write). Cross-cutting dependency for T1/T3/T6/T9.
 - [ ] **T05 — Audit log viewer page** *(scope: `/audit` route, owner-only, virtualized table (5 000+ rows), filters by user/action/resource/date. Reuses `<TaskFilters>` URL-param pattern from Phase 1. `system.auditLog` query already declared in v1 §4.6 — implement here.)* — Risk: **Low** (reuse pattern from `/tasks`).
 - [ ] **T06 — Loop approve/reject inline** *(scope: in `/tasks/[id]` task detail, when the task is part of a loop in `pending_approval`, render Approve / Reject buttons. tRPC `loops.approve({ loopId })` / `loops.reject({ loopId, reason? })` mutations call MCP `bridge_loop_approve` / `bridge_loop_reject`. **Server-confirmed UI** — no optimistic update for this mutation per review §d.1.)* — Risk: **High** (race: same loop approved on web + rejected on Telegram simultaneously; daemon needs `BEGIN IMMEDIATE` or compare-and-swap).
-- [ ] **T07 — Rate-limit middleware** *(scope: tRPC `procedure` middleware enforcing token-bucket of 30 mutations/min/user. In-memory map keyed by `userId`; return tRPC `TOO_MANY_REQUESTS` (HTTP 429) with `Retry-After` header. Also rate-limit pre-auth `/login` to 5 req/min/IP per v1 §10. Audit-log a `rate_limit_blocked` row.)* — Risk: **Low** (single-process). Note: multi-replica deferred to Phase 4.
+- [x] **T07 — Rate-limit middleware** *(scope: tRPC `procedure` middleware enforcing token-bucket of 30 mutations/min/user. In-memory map keyed by `userId`; return tRPC `TOO_MANY_REQUESTS` (HTTP 429) with `Retry-After` header. Also rate-limit pre-auth `/login` to 5 req/min/IP per v1 §10. Audit-log a `rate_limit_blocked` row.)* — Risk: **Low** (single-process). Note: multi-replica deferred to Phase 4.
 - [x] **T08 — CSRF double-submit cookie** *(scope: `csrf-csrf` lib (or hand-rolled HMAC token) issuing `csrfToken` cookie + `x-csrf-token` header on every mutation request. Missing/mismatch → HTTP 403. Applied at tRPC HTTP entry — `app/api/trpc/[trpc]/route.ts`. ADR: tRPC POST mutations only — Server Actions are not used. Documented in `docs/adr/0001-csrf-strategy.md`.)* — Risk: **Medium** (Next.js Server Actions vs tRPC POST mismatch — this task locks tRPC POST as the only mutation surface).
 - [ ] **T09 — Permission relay UI** *(scope: extend `/api/stream/tasks` (or new `/api/stream/permissions`) to multiplex `tool_use_pending` events from the daemon's `permissions` table. Toast with Allow/Deny calls a tRPC mutation that updates the row (or invokes a daemon MCP tool if exposed). Replaces Telegram for the permission flow when the user is at the dashboard.)* — Risk: **High** (cross-repo schema drift on `tool_use_pending` event format; `permissions` table is daemon-owned).
 - [ ] **T10 — Optimistic UI updates** *(scope: React Query `useMutation` `onMutate`/`onError` rollback for dispatch + kill. `loops.approve`/`reject` are **server-confirmed** (no optimistic) per review §d.1. Tests assert rollback path on simulated 500.)* — Risk: **Low** (RQ convention).
