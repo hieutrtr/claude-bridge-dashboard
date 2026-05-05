@@ -1,9 +1,9 @@
-// T5 — /agents page. React Server Component that calls the tRPC procedure
-// in-process via createCaller (no HTTP roundtrip) and hands the rows to the
-// pure AgentsTable component.
+// T03 — /agents page. React Server Component that calls the tRPC
+// procedure in-process via createCaller (no HTTP roundtrip) and hands
+// the rows to the pure AgentsGrid component.
 
-import { appRouter } from "../../src/server/routers/_app";
-import { AgentsTable } from "../../src/components/agents-table";
+import { appRouter } from "@/src/server/routers/_app";
+import { AgentsGrid } from "@/src/components/agents-grid";
 
 export const dynamic = "force-dynamic";
 
@@ -11,9 +11,9 @@ export default async function AgentsPage() {
   const caller = appRouter.createCaller({});
   const agents = await caller.agents.list();
   return (
-    <main>
-      <h1>Agents</h1>
-      <AgentsTable agents={agents} />
-    </main>
+    <div className="space-y-6">
+      <h1 className="text-2xl font-semibold">Agents</h1>
+      <AgentsGrid agents={agents} />
+    </div>
   );
 }
