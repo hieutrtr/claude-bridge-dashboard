@@ -9,7 +9,8 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "bun test",
+    "test": "bun test tests/lib tests/app tests/server",
+    "test:e2e": "playwright test --config=playwright.config.ts",
     "db:introspect": "bun run scripts/introspect.ts"
   },
   "dependencies": {
@@ -22,16 +23,20 @@
     "next-themes": "^0.4.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "recharts": "^2.15.0",
+    "rehype-sanitize": "^6.0.0",
     "tailwind-merge": "^2.5.5",
     "zod": "^3.23.0"
   },
   "devDependencies": {
+    "@libsql/client": "^0.14.0",
+    "@playwright/test": "1.59.1",
     "@tailwindcss/postcss": "^4.0.0",
     "@types/bun": "latest",
     "@types/node": "^20.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "@libsql/client": "^0.14.0",
     "drizzle-kit": "^0.30.0",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.4.0"
