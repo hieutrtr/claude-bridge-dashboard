@@ -46,6 +46,15 @@ export interface CallOptions {
   timeoutMs?: number;
 }
 
+/**
+ * Minimal contract a mutation procedure needs from the pool. Tests inject a
+ * fake (no spawn) by satisfying this shape; production wiring uses the
+ * concrete `McpPool` returned by `getMcpPool()`.
+ */
+export interface McpClient {
+  call(method: string, params: unknown, opts?: CallOptions): Promise<unknown>;
+}
+
 interface PendingCall {
   id: number;
   resolve: (value: unknown) => void;
@@ -355,19 +364,20 @@ export class McpPool {
 
 // --- Singleton factory (lazy) ---
 
-let singleton: McpPool | null = null;
+let singleton: McpClient | null = null;
 
 /**
- * Returns the process-wide singleton MCP pool. Lazily constructed on first
+ * Returns the process-wide singleton MCP client. Lazily constructed on first
  * call. Tests should construct `new McpPool(...)` directly so they don't
- * pollute the singleton.
+ * pollute the singleton, or use `__setMcpClientForTests(...)` to inject a
+ * fake.
  *
  * Production wiring uses `CLAUDE_BRIDGE_MCP_COMMAND` env (space-separated
  * command + args) when set; otherwise defaults to `bridge mcp`. Note: the
  * `bridge mcp` subcommand does not yet exist in the daemon CLI as of
  * 2026-05-06 — see docs/tasks/phase-2/T12-mcp-pool.md "Daemon command gap".
  */
-export function getMcpPool(): McpPool {
+export function getMcpPool(): McpClient {
   if (singleton) return singleton;
   const override = process.env.CLAUDE_BRIDGE_MCP_COMMAND?.trim();
   let command: string;
@@ -387,4 +397,13 @@ export function getMcpPool(): McpPool {
 /** Test-only: reset the singleton. */
 export function __resetMcpPoolForTests(): void {
   singleton = null;
+}
+
+/**
+ * Test-only: inject a specific client (real `McpPool` or fake). Pass `null`
+ * to clear the override and let `getMcpPool()` lazily construct again. Used
+ * by tRPC dispatch tests to avoid spawning a real daemon process.
+ */
+export function __setMcpClientForTests(client: McpClient | null): void {
+  singleton = client;
 }

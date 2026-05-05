@@ -3,12 +3,17 @@
 //   1. csrfGuard (T08) — see docs/adr/0001-csrf-strategy.md.
 //   2. rateLimitMutations (T07) — see docs/tasks/phase-2/T07-rate-limit.md.
 // GET queries bypass both guards.
+//
+// T01 (Phase 2) populates the tRPC context with `req`, `userId`, and the
+// MCP client singleton so mutation procedures can call into the daemon
+// and write audit rows derived from request metadata.
 
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { appRouter } from "../../../../src/server/routers/_app";
 import { SESSION_COOKIE, readAuthEnv, verifySession } from "../../../../src/lib/auth";
 import { csrfGuard } from "../../../../src/server/csrf-guard";
 import { rateLimitMutations } from "../../../../src/server/rate-limit-mutations";
+import { getMcpPool } from "../../../../src/server/mcp/pool";
 
 const handler = async (req: Request) => {
   const blockedCsrf = await csrfGuard(req);
@@ -22,7 +27,11 @@ const handler = async (req: Request) => {
     endpoint: "/api/trpc",
     req,
     router: appRouter,
-    createContext: () => ({}),
+    createContext: () => ({
+      req,
+      userId: sessionUserId,
+      mcp: getMcpPool(),
+    }),
   });
 };
 

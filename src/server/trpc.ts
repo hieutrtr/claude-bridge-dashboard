@@ -1,12 +1,25 @@
 // T5 — tRPC v11 base. Single shared `t` instance so every router uses the
 // same transformer, error formatter, and context type.
 //
-// Context is empty for the spike — Phase 4 (auth) will add `user`,
-// `requireAuth`, and `requireRole` middlewares per ARCHITECTURE.md §6.
+// T01 (Phase 2) widens the context: mutation procedures need (a) the
+// originating Request to derive `ip_hash` + UA + request_id for the
+// `audit_log` row (T04), (b) the resolved JWT subject so audit + future
+// authz middleware know who acted, and (c) the MCP client so the
+// procedure can call into the daemon. Queries from Phase 1 ignore these
+// fields and continue to compile (all three are optional).
 
 import { initTRPC } from "@trpc/server";
 
-export type Context = Record<string, never>;
+import type { McpClient } from "./mcp/pool";
+
+export interface Context {
+  /** Original Request — used by audit for ip_hash + UA + request_id. */
+  req?: Request;
+  /** Resolved JWT subject, or null when unauthenticated. */
+  userId?: string | null;
+  /** MCP transport client. Required for mutation procedures. */
+  mcp?: McpClient;
+}
 
 const t = initTRPC.context<Context>().create();
 

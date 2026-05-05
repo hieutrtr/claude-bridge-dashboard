@@ -2,8 +2,13 @@
 // Tasks tab feed). T05 added the global `list` (status / agentName /
 // channel / since / until filters with cursor pagination) for the
 // `/tasks` page. T06 adds `get` (single-row detail for `/tasks/[id]`).
-// `transcript` and `stream` belong to T07 / T08; the mutation surface
-// (`dispatch`, `kill`, `retry`) is out of Phase 1.
+// `transcript` and `stream` belong to T07 / T08.
+//
+// Phase 2 T01 adds the first mutation — `dispatch`. The procedure routes
+// every dispatch through the daemon's `bridge_dispatch` MCP tool via the
+// pool from T12; it never spawns a child process or inserts into the
+// `tasks` table directly. CSRF + rate-limit guards live at the route
+// handler (T08 + T07); audit row writing happens in-procedure (T04).
 //
 // `list*` queries return id-DESC pages keyed by `tasks.id` so the cursor
 // (`id < ?`) stays stable under concurrent inserts. Per ARCHITECTURE.md
@@ -14,14 +19,18 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { and, desc, eq, gte, inArray, lt, lte } from "drizzle-orm";
 
 import { publicProcedure, router } from "../trpc";
 import { getDb } from "../db";
 import { agents, tasks } from "../../db/schema";
+import { appendAudit } from "../audit";
+import { auditFailureCode, mapMcpErrorToTrpc } from "../mcp/errors";
 import type {
   AgentTaskPage,
+  DispatchResult,
   GlobalTaskPage,
   TaskDetail,
   TaskTranscript,
@@ -94,6 +103,33 @@ const GetInput = z.object({
   id: z.number().int().positive(),
 });
 
+// P2-T01 — `tasks.dispatch` input schema.
+//
+// `agentName` 128-char cap matches the daemon's name regex (no
+// pre-validation server-side; daemon resolves the name and surfaces
+// "agent not found" via `MCP_RPC_ERROR`). `prompt` 32_000 cap is well
+// above any human prompt and below stdio framing concerns; oversized
+// prompts get rejected as `BAD_REQUEST` rather than fragmenting an
+// MCP frame. `model` is opaque (any non-empty string up to 64 chars)
+// — the daemon validates against its own model registry.
+const DispatchInput = z.object({
+  agentName: z.string().min(1).max(128),
+  prompt: z.string().min(1).max(32_000),
+  model: z.string().min(1).max(64).optional(),
+});
+
+const DISPATCH_TIMEOUT_MS = 15_000;
+
+interface BridgeDispatchResult {
+  task_id?: number;
+}
+
+function extractTaskId(value: unknown): number | null {
+  if (value === null || typeof value !== "object") return null;
+  const tid = (value as BridgeDispatchResult).task_id;
+  return typeof tid === "number" && Number.isFinite(tid) && tid > 0 ? tid : null;
+}
+
 const TASK_DETAIL_SELECTION = {
   id: tasks.id,
   agentName: agents.name,
@@ -134,6 +170,94 @@ function clipUtf8(input: string, byteLimit: number): { value: string; truncated:
 }
 
 export const tasksRouter = router({
+  // P2-T01 — dispatch a new task to an agent via the daemon's
+  // `bridge_dispatch` MCP tool. CSRF + rate-limit guards run at the
+  // route handler (T08 + T07); this procedure handles the audit row +
+  // error mapping. We never insert into `tasks` directly — the daemon
+  // owns task lifecycle.
+  //
+  // Audit shape:
+  //   success → action="task.dispatch", resource_id=String(taskId),
+  //             payload={ agentName, model? }
+  //   failure → action="task.dispatch.error",
+  //             payload={ agentName, model?, code }
+  //
+  // The prompt is *not* persisted in `payload_json` — the daemon writes
+  // the full prompt to `tasks.prompt`; the audit row is a minimal
+  // index, not a duplicate (and prompts may carry operational
+  // secrets).
+  dispatch: publicProcedure
+    .input(DispatchInput)
+    .mutation(async ({ input, ctx }): Promise<DispatchResult> => {
+      if (!ctx.mcp) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "MCP client not configured on tRPC context",
+        });
+      }
+
+      const params: { agent: string; prompt: string; model?: string } = {
+        agent: input.agentName,
+        prompt: input.prompt,
+      };
+      if (input.model !== undefined) params.model = input.model;
+
+      const auditBase = {
+        resourceType: "task" as const,
+        userId: ctx.userId ?? null,
+        req: ctx.req,
+      };
+
+      let result: unknown;
+      try {
+        result = await ctx.mcp.call("bridge_dispatch", params, {
+          timeoutMs: DISPATCH_TIMEOUT_MS,
+        });
+      } catch (err) {
+        appendAudit({
+          ...auditBase,
+          action: "task.dispatch.error",
+          resourceId: null,
+          payload: {
+            agentName: input.agentName,
+            model: input.model,
+            code: auditFailureCode(err),
+          },
+        });
+        throw mapMcpErrorToTrpc(err);
+      }
+
+      const taskId = extractTaskId(result);
+      if (taskId === null) {
+        appendAudit({
+          ...auditBase,
+          action: "task.dispatch.error",
+          resourceId: null,
+          payload: {
+            agentName: input.agentName,
+            model: input.model,
+            code: "malformed_response",
+          },
+        });
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "daemon returned malformed dispatch response",
+        });
+      }
+
+      appendAudit({
+        ...auditBase,
+        action: "task.dispatch",
+        resourceId: String(taskId),
+        payload: {
+          agentName: input.agentName,
+          model: input.model,
+        },
+      });
+
+      return { taskId };
+    }),
+
   listByAgent: publicProcedure
     .input(ListByAgentInput)
     .query(({ input }): AgentTaskPage => {

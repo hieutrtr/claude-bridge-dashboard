@@ -190,3 +190,12 @@ export interface TaskTranscript {
   // avoid a circular type dep.
   turns: import("../lib/transcript").TranscriptTurn[];
 }
+
+// T01 (Phase 2) — wire shape returned by `tasks.dispatch`. The daemon's
+// `bridge_dispatch` MCP tool returns `{ task_id: number }` (snake_case,
+// matches the SQLite `tasks.id` autoincrement). The dashboard
+// normalises to camelCase before crossing the tRPC boundary so the
+// client only ever sees one casing convention.
+export interface DispatchResult {
+  taskId: number;
+}
