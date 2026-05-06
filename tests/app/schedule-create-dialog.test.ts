@@ -49,6 +49,8 @@ function baseProps(
     errorCode: null,
     errorMessage: null,
     csrfMissing: false,
+    forecast: null,
+    forecastLoading: false,
     ...overrides,
   };
 }
@@ -226,5 +228,133 @@ describe("<ScheduleCreateDialogView>", () => {
     expect(html).toMatch(
       /<input[^>]*name="channelChatId"[^>]*value="telegram-12345"/,
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// P3-T9 — cost-forecast block render matrix
+// ─────────────────────────────────────────────────────────────────────
+
+describe("<ScheduleCreateDialogView> — cost forecast block", () => {
+  it("hides the forecast block when forecast === null and not loading", () => {
+    const html = renderToStaticMarkup(
+      ScheduleCreateDialogView(baseProps({ forecast: null, forecastLoading: false })),
+    );
+    expect(html).not.toContain("Estimated spend");
+    expect(html).not.toContain("Insufficient history");
+    expect(html).not.toContain("Computing forecast");
+  });
+
+  it("renders 'Computing forecast' when forecastLoading=true", () => {
+    const html = renderToStaticMarkup(
+      ScheduleCreateDialogView(
+        baseProps({ forecast: null, forecastLoading: true }),
+      ),
+    );
+    expect(html).toContain("Computing forecast");
+  });
+
+  it("renders the dollar estimate + likely range + sample count on happy path", () => {
+    const html = renderToStaticMarkup(
+      ScheduleCreateDialogView(
+        baseProps({
+          forecast: {
+            sample: 18,
+            runsPerMonth: 720,
+            avgCostPerRun: 0.0057,
+            p10CostPerRun: 0.0032,
+            p90CostPerRun: 0.0094,
+            monthlyEstimateUsd: 4.12,
+            monthlyLowUsd: 2.30,
+            monthlyHighUsd: 6.80,
+            insufficientHistory: false,
+            cadenceUnresolved: false,
+          },
+          forecastLoading: false,
+        }),
+      ),
+    );
+    expect(html).toContain("Estimated spend");
+    expect(html).toContain("$4.12");
+    expect(html).toContain("$2.30");
+    expect(html).toContain("$6.80");
+    expect(html).toContain("18 samples");
+    expect(html).not.toContain("Insufficient history");
+  });
+
+  it("renders the calibration hint + runsPerMonth when insufficientHistory=true", () => {
+    const html = renderToStaticMarkup(
+      ScheduleCreateDialogView(
+        baseProps({
+          forecast: {
+            sample: 0,
+            runsPerMonth: 720,
+            avgCostPerRun: null,
+            p10CostPerRun: null,
+            p90CostPerRun: null,
+            monthlyEstimateUsd: null,
+            monthlyLowUsd: null,
+            monthlyHighUsd: null,
+            insufficientHistory: true,
+            cadenceUnresolved: false,
+          },
+          forecastLoading: false,
+        }),
+      ),
+    );
+    expect(html).toContain("Insufficient history");
+    expect(html).toContain("720");
+    expect(html).not.toContain("Estimated spend");
+  });
+
+  it("renders the unresolved hint when cadenceUnresolved=true", () => {
+    const html = renderToStaticMarkup(
+      ScheduleCreateDialogView(
+        baseProps({
+          forecast: {
+            sample: 3,
+            runsPerMonth: 0,
+            avgCostPerRun: 0.05,
+            p10CostPerRun: 0.04,
+            p90CostPerRun: 0.06,
+            monthlyEstimateUsd: null,
+            monthlyLowUsd: null,
+            monthlyHighUsd: null,
+            insufficientHistory: false,
+            cadenceUnresolved: true,
+          },
+          forecastLoading: false,
+        }),
+      ),
+    );
+    expect(html).toContain("Forecast unavailable for this cadence");
+  });
+
+  it("uses singular 'sample' for sample === 1", () => {
+    const html = renderToStaticMarkup(
+      ScheduleCreateDialogView(
+        baseProps({
+          forecast: {
+            sample: 1,
+            runsPerMonth: 720,
+            avgCostPerRun: 0.05,
+            p10CostPerRun: 0.05,
+            p90CostPerRun: 0.05,
+            monthlyEstimateUsd: 36,
+            monthlyLowUsd: 36,
+            monthlyHighUsd: 36,
+            insufficientHistory: false,
+            cadenceUnresolved: false,
+          },
+          forecastLoading: false,
+        }),
+      ),
+    );
+    // Sample size 1 should still render as the dollar block — but the
+    // helper marks it `insufficientHistory` ONLY if sample < 3. We
+    // pass through `insufficientHistory: false` explicitly here to
+    // pin the singular wording rule independent of the threshold.
+    expect(html).toContain("1 sample");
+    expect(html).not.toContain("1 samples");
   });
 });

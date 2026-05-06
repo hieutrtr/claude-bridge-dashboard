@@ -16,15 +16,17 @@
 
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull } from "drizzle-orm";
 
 import { publicProcedure, router } from "../trpc";
 import { getDb } from "../db";
 import { agents, schedules, tasks } from "../../db/schema";
 import { appendAudit } from "../audit";
 import { auditFailureCode, mapMcpErrorToTrpc } from "../mcp/errors";
+import { forecastSchedule } from "../../lib/cost-forecast";
 import type {
   ScheduleAddResult,
+  ScheduleCostForecast,
   ScheduleListPage,
   ScheduleListRow,
   ScheduleMutationResult,
@@ -225,6 +227,31 @@ interface ScheduleRunsLookupRow {
   prompt: string;
   channel: string | null;
 }
+
+// P3-T9 — `schedules.costForecast` input. At least one of
+// `intervalMinutes` or `cronExpr` must be supplied (the Zod refine
+// below enforces this — neither = BAD_REQUEST). The helper at
+// `src/lib/cost-forecast.ts` decides which one wins when both are
+// present (cron gets priority for non-uniform schedules).
+//
+// `intervalMinutes` cap matches `add` (43_200 — 30 days). `cronExpr`
+// length cap matches `add` (256). `agent` Zod-validates against the
+// daemon's `agents.name` column shape (1..128).
+const CostForecastInput = z
+  .object({
+    agent: z.string().min(1).max(128),
+    intervalMinutes: z.number().int().min(1).max(43_200).optional(),
+    cronExpr: z.string().min(1).max(256).optional(),
+  })
+  .refine(
+    (v) => v.intervalMinutes !== undefined || v.cronExpr !== undefined,
+    {
+      message: "either intervalMinutes or cronExpr must be supplied",
+      path: ["intervalMinutes"],
+    },
+  );
+
+const COST_FORECAST_SAMPLE_CAP = 200;
 
 function lookupScheduleForRuns(id: number): ScheduleRunsLookupRow | null {
   const db = getDb();
@@ -606,5 +633,86 @@ export const schedulesRouter = router({
         agentName: schedule.agentName,
         items,
       };
+    }),
+
+  // P3-T9 — cost forecast for a candidate schedule. Read-only: pulls
+  // the agent's recent cost-bearing task rows and hands the array +
+  // cadence to `forecastSchedule` (single source of truth for the
+  // math). The schedule-create dialog calls this every time the user
+  // changes agent / cadence and renders the resulting wire envelope
+  // under the cron picker.
+  //
+  // Input contract: at least one of `intervalMinutes` / `cronExpr`
+  // must be supplied (Zod refine). When both are supplied, the helper
+  // prefers cron (more accurate for non-uniform schedules); when
+  // cron is invalid / un-parseable it silently falls back to the
+  // interval. An entirely-unresolved cadence (cron malformed +
+  // interval missing) surfaces `cadenceUnresolved: true` on the wire
+  // — the dialog hides the dollar block and the math still produces
+  // useful sample-pool diagnostics.
+  //
+  // Sample pool: 200 most-recent cost-bearing tasks for the agent
+  // (`cost_usd > 0`, ordered id DESC, no date filter — see review).
+  // Unknown agent → empty pool → `insufficientHistory: true` but
+  // `runsPerMonth` still computed (useful "what if this agent
+  // existed?" diagnostic).
+  //
+  // No audit, no MCP, no CSRF — read-only query (Phase 2 audit-scope
+  // decision: queries are not audited).
+  costForecast: publicProcedure
+    .input(CostForecastInput)
+    .query(({ input }): ScheduleCostForecast => {
+      const db = getDb();
+
+      // Resolve the agent's session_id. Unknown agent → empty sample
+      // pool; we still compute `runsPerMonth` so the caller can render
+      // "this cadence fires N times per month" without history.
+      const agentRows = db
+        .select({ sessionId: agents.sessionId })
+        .from(agents)
+        .where(eq(agents.name, input.agent))
+        .limit(1)
+        .all();
+
+      let samples: number[] = [];
+      if (agentRows.length > 0) {
+        const sessionId = agentRows[0]!.sessionId;
+        // Drizzle expression: `cost_usd > 0`. Drops both NULL (via
+        // `isNotNull`) and zero-cost rows in one pass; the daemon
+        // writes `cost_usd = 0` for tasks that never billed (early
+        // exit / validation failure), and including those would skew
+        // the median toward 0 (under-estimate).
+        const rows = db
+          .select({ costUsd: tasks.costUsd })
+          .from(tasks)
+          .where(
+            and(
+              eq(tasks.sessionId, sessionId),
+              isNotNull(tasks.costUsd),
+              gt(tasks.costUsd, 0),
+            ),
+          )
+          .orderBy(desc(tasks.id))
+          .limit(COST_FORECAST_SAMPLE_CAP)
+          .all();
+        samples = rows
+          .map((r) => r.costUsd)
+          .filter((v): v is number => v !== null);
+      }
+
+      // `now` capture is internal to the procedure — the cron-mode
+      // cadence count anchors on it but interval-mode is time-
+      // independent. Tests for cron-mode behavior live in
+      // `tests/lib/cost-forecast.test.ts` where `now` is injectable;
+      // the router test pins interval-mode + zero-sample-pool paths
+      // against deterministic seed data.
+      const forecast = forecastSchedule({
+        samples,
+        intervalMinutes: input.intervalMinutes ?? null,
+        cronExpr: input.cronExpr ?? null,
+        now: new Date(),
+      });
+
+      return forecast;
     }),
 });

@@ -489,3 +489,32 @@ export interface ScheduleRunsPage {
   agentName: string;
   items: ScheduleRunRow[];
 }
+
+// P3-T9 — wire shape returned by `schedules.costForecast`. Read-only;
+// no MCP, no audit. The forecast is "what would this schedule cost per
+// month at the current cadence, given the agent's recent task-cost
+// history?"
+//
+// All monthly USD fields are nullable: `monthlyEstimateUsd` is null
+// when either (a) no cost samples exist for the agent yet
+// (`insufficientHistory: true` plus `sample === 0`), or (b) the
+// cadence isn't resolvable (`cadenceUnresolved: true`). The dialog
+// renders the calibration / unresolved hint instead of `$NaN/month`
+// when those flags are set.
+//
+// Percentile fields (`avgCostPerRun = p50`, `p10/p90CostPerRun`) are
+// populated whenever `sample > 0` regardless of the threshold gate —
+// they're useful diagnostics even with 1-2 samples; the threshold
+// only gates the dialog's *dollar* render.
+export interface ScheduleCostForecast {
+  sample: number;
+  runsPerMonth: number;
+  avgCostPerRun: number | null;
+  p10CostPerRun: number | null;
+  p90CostPerRun: number | null;
+  monthlyEstimateUsd: number | null;
+  monthlyLowUsd: number | null;
+  monthlyHighUsd: number | null;
+  insufficientHistory: boolean;
+  cadenceUnresolved: boolean;
+}

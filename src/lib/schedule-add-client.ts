@@ -29,6 +29,7 @@ import { CronExpressionParser } from "cron-parser";
 import { CSRF_HEADER } from "./csrf";
 
 export const SCHEDULE_ADD_URL = "/api/trpc/schedules.add";
+export const SCHEDULE_COST_FORECAST_URL = "/api/trpc/schedules.costForecast";
 
 export interface ScheduleAddInput {
   name?: string;
@@ -230,6 +231,35 @@ export function buildScheduleAddRequest(
       },
       body: JSON.stringify({ json }),
     },
+  };
+}
+
+/**
+ * P3-T9 — build the GET URL for a `schedules.costForecast` query. tRPC
+ * v11 GET shape is `?input=<urlEncodedJsonEnvelope>` for un-transformed
+ * inputs. Optional fields (intervalMinutes / cronExpr) are dropped
+ * from the envelope when undefined, mirroring the POST builder above.
+ */
+export interface CostForecastFetchInput {
+  agent: string;
+  intervalMinutes?: number;
+  cronExpr?: string;
+}
+
+export function buildCostForecastRequest(
+  input: CostForecastFetchInput,
+): { url: string; init: RequestInit } {
+  const json: Record<string, unknown> = { agent: input.agent };
+  if (input.intervalMinutes !== undefined) {
+    json.intervalMinutes = input.intervalMinutes;
+  }
+  if (input.cronExpr !== undefined) {
+    json.cronExpr = input.cronExpr;
+  }
+  const search = new URLSearchParams({ input: JSON.stringify({ json }) });
+  return {
+    url: `${SCHEDULE_COST_FORECAST_URL}?${search.toString()}`,
+    init: { method: "GET" },
   };
 }
 

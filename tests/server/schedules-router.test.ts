@@ -1317,3 +1317,238 @@ describe("schedules.runs — input validation + unknown id", () => {
     expect(caught!.code).toBe("BAD_REQUEST");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────
+// P3-T9 — schedules.costForecast (read-only, no MCP, no audit)
+// ─────────────────────────────────────────────────────────────────────
+//
+// The router fetches the agent's recent cost-bearing tasks and hands
+// the array to `forecastSchedule` (the pure helper exhaustively tested
+// in `tests/lib/cost-forecast.test.ts`). These cases pin the *DB* path:
+// agent lookup, sample filter (cost_usd > 0, NOT NULL), 200-row cap,
+// id-DESC ordering, and the wire-shape forwarding. Cron-mode cadence
+// math lives in the lib test (deterministic-`now` injection).
+
+describe("schedules.costForecast — happy path (interval mode)", () => {
+  it("returns wire shape with sample percentiles + monthly forecast", async () => {
+    seedAgent(db, { name: "alpha", sessionId: "sess-alpha" });
+    // Five $0.05 cost-bearing tasks → median = $0.05.
+    for (let i = 0; i < 5; i++) {
+      seedTask(db, {
+        sessionId: "sess-alpha",
+        prompt: `task-${i}`,
+        costUsd: 0.05,
+        status: "done",
+      });
+    }
+
+    const caller = appRouter.createCaller({});
+    const out = await caller.schedules.costForecast({
+      agent: "alpha",
+      intervalMinutes: 60,
+    });
+
+    expect(out.sample).toBe(5);
+    expect(out.runsPerMonth).toBe(720);
+    expect(out.avgCostPerRun).toBeCloseTo(0.05, 6);
+    expect(out.monthlyEstimateUsd).toBeCloseTo(0.05 * 720, 6);
+    expect(out.insufficientHistory).toBe(false);
+    expect(out.cadenceUnresolved).toBe(false);
+  });
+
+  it("excludes 0-cost rows from the sample pool", async () => {
+    seedAgent(db, { name: "alpha", sessionId: "sess-alpha" });
+    seedTask(db, { sessionId: "sess-alpha", prompt: "a", costUsd: 0 });
+    seedTask(db, { sessionId: "sess-alpha", prompt: "b", costUsd: 0 });
+    seedTask(db, { sessionId: "sess-alpha", prompt: "c", costUsd: 0.05 });
+
+    const caller = appRouter.createCaller({});
+    const out = await caller.schedules.costForecast({
+      agent: "alpha",
+      intervalMinutes: 60,
+    });
+    expect(out.sample).toBe(1);
+    expect(out.avgCostPerRun).toBeCloseTo(0.05, 6);
+  });
+
+  it("excludes rows where cost_usd IS NULL", async () => {
+    seedAgent(db, { name: "alpha", sessionId: "sess-alpha" });
+    // costUsd defaults to null when omitted in the seed helper.
+    seedTask(db, { sessionId: "sess-alpha", prompt: "no-cost-1" });
+    seedTask(db, { sessionId: "sess-alpha", prompt: "no-cost-2" });
+    seedTask(db, { sessionId: "sess-alpha", prompt: "real", costUsd: 0.10 });
+
+    const caller = appRouter.createCaller({});
+    const out = await caller.schedules.costForecast({
+      agent: "alpha",
+      intervalMinutes: 60,
+    });
+    expect(out.sample).toBe(1);
+  });
+
+  it("clamps the sample pool at 200 rows (most-recent first)", async () => {
+    seedAgent(db, { name: "alpha", sessionId: "sess-alpha" });
+    for (let i = 0; i < 250; i++) {
+      seedTask(db, {
+        sessionId: "sess-alpha",
+        prompt: `t-${i}`,
+        costUsd: 0.01,
+      });
+    }
+    const caller = appRouter.createCaller({});
+    const out = await caller.schedules.costForecast({
+      agent: "alpha",
+      intervalMinutes: 60,
+    });
+    expect(out.sample).toBe(200);
+  });
+
+  it("scopes samples to the requested agent's session_id only", async () => {
+    seedAgent(db, { name: "alpha", sessionId: "sess-alpha" });
+    seedAgent(db, { name: "beta", projectDir: "/tmp/beta", sessionId: "sess-beta" });
+    // alpha — three samples
+    for (let i = 0; i < 3; i++) {
+      seedTask(db, {
+        sessionId: "sess-alpha",
+        prompt: `alpha-${i}`,
+        costUsd: 0.05,
+      });
+    }
+    // beta — five samples (would skew if the filter leaks)
+    for (let i = 0; i < 5; i++) {
+      seedTask(db, {
+        sessionId: "sess-beta",
+        prompt: `beta-${i}`,
+        costUsd: 1.0,
+      });
+    }
+
+    const caller = appRouter.createCaller({});
+    const out = await caller.schedules.costForecast({
+      agent: "alpha",
+      intervalMinutes: 60,
+    });
+    expect(out.sample).toBe(3);
+    expect(out.avgCostPerRun).toBeCloseTo(0.05, 6);
+  });
+});
+
+describe("schedules.costForecast — empty / unknown / unresolved cases", () => {
+  it("agent with zero cost-bearing tasks → insufficientHistory + null monthly", async () => {
+    seedAgent(db, { name: "alpha", sessionId: "sess-alpha" });
+    const caller = appRouter.createCaller({});
+    const out = await caller.schedules.costForecast({
+      agent: "alpha",
+      intervalMinutes: 60,
+    });
+    expect(out.sample).toBe(0);
+    expect(out.runsPerMonth).toBe(720);
+    expect(out.insufficientHistory).toBe(true);
+    expect(out.monthlyEstimateUsd).toBeNull();
+    expect(out.cadenceUnresolved).toBe(false);
+  });
+
+  it("unknown agent → empty sample pool + still computes runsPerMonth", async () => {
+    const caller = appRouter.createCaller({});
+    const out = await caller.schedules.costForecast({
+      agent: "ghost",
+      intervalMinutes: 1440,
+    });
+    expect(out.sample).toBe(0);
+    expect(out.runsPerMonth).toBe(30);
+    expect(out.insufficientHistory).toBe(true);
+    expect(out.cadenceUnresolved).toBe(false);
+  });
+});
+
+describe("schedules.costForecast — input validation", () => {
+  it("rejects when neither cron nor interval supplied", async () => {
+    const caller = appRouter.createCaller({});
+    let caught: TRPCError | null = null;
+    try {
+      await caller.schedules.costForecast({ agent: "alpha" });
+    } catch (e) {
+      caught = e as TRPCError;
+    }
+    expect(caught!.code).toBe("BAD_REQUEST");
+  });
+
+  it("rejects empty agent string", async () => {
+    const caller = appRouter.createCaller({});
+    let caught: TRPCError | null = null;
+    try {
+      await caller.schedules.costForecast({
+        agent: "",
+        intervalMinutes: 60,
+      });
+    } catch (e) {
+      caught = e as TRPCError;
+    }
+    expect(caught!.code).toBe("BAD_REQUEST");
+  });
+
+  it("rejects intervalMinutes out of range", async () => {
+    const caller = appRouter.createCaller({});
+    let caught: TRPCError | null = null;
+    try {
+      await caller.schedules.costForecast({
+        agent: "alpha",
+        intervalMinutes: 0,
+      });
+    } catch (e) {
+      caught = e as TRPCError;
+    }
+    expect(caught!.code).toBe("BAD_REQUEST");
+  });
+});
+
+describe("schedules.costForecast — no audit row, no MCP", () => {
+  it("does NOT write an audit row (read-only query)", async () => {
+    seedAgent(db, { name: "alpha", sessionId: "sess-alpha" });
+    const caller = appRouter.createCaller({});
+    await caller.schedules.costForecast({
+      agent: "alpha",
+      intervalMinutes: 60,
+    });
+    expect(rows(db).length).toBe(0);
+  });
+
+  it("runs without an MCP client wired (no INTERNAL_SERVER_ERROR)", async () => {
+    seedAgent(db, { name: "alpha", sessionId: "sess-alpha" });
+    const caller = appRouter.createCaller({}); // no mcp on ctx
+    const out = await caller.schedules.costForecast({
+      agent: "alpha",
+      intervalMinutes: 60,
+    });
+    expect(out.sample).toBe(0);
+  });
+});
+
+describe("schedules.costForecast — cron mode wire-shape sanity", () => {
+  it("hourly cron expression resolves to runsPerMonth=720", async () => {
+    seedAgent(db, { name: "alpha", sessionId: "sess-alpha" });
+    const caller = appRouter.createCaller({});
+    const out = await caller.schedules.costForecast({
+      agent: "alpha",
+      cronExpr: "0 * * * *",
+    });
+    expect(out.runsPerMonth).toBe(720);
+    expect(out.cadenceUnresolved).toBe(false);
+  });
+
+  it("malformed cron + missing interval → cadenceUnresolved", async () => {
+    seedAgent(db, { name: "alpha", sessionId: "sess-alpha" });
+    seedTask(db, { sessionId: "sess-alpha", prompt: "x", costUsd: 0.05 });
+    const caller = appRouter.createCaller({});
+    const out = await caller.schedules.costForecast({
+      agent: "alpha",
+      cronExpr: "not a cron",
+    });
+    expect(out.cadenceUnresolved).toBe(true);
+    expect(out.runsPerMonth).toBe(0);
+    expect(out.monthlyEstimateUsd).toBeNull();
+    // Sample pool diagnostics still flow through.
+    expect(out.sample).toBe(1);
+    expect(out.avgCostPerRun).toBeCloseTo(0.05, 6);
+  });
+});

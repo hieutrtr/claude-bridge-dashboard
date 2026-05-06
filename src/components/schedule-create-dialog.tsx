@@ -19,9 +19,9 @@
 // event, matching the dispatch dialog's pattern from Phase 2 T02 +
 // the start-loop dialog from P3-T3.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { Agent } from "@/src/server/dto";
+import type { Agent, ScheduleCostForecast } from "@/src/server/dto";
 import { Button } from "@/src/components/ui/button";
 import {
   AGENTS_LIST_URL,
@@ -32,10 +32,12 @@ import {
 } from "@/src/lib/dispatch-client";
 import {
   ScheduleAddError,
+  buildCostForecastRequest,
   buildScheduleAddRequest,
   parseTrpcResponse as parseScheduleAddResponse,
   type ScheduleAddInput,
 } from "@/src/lib/schedule-add-client";
+import { formatUsd } from "@/src/lib/cost-forecast";
 import {
   CronPicker,
   type CronPickerOnChange,
@@ -64,6 +66,13 @@ export interface ScheduleCreateDialogViewProps {
   errorCode: string | null;
   errorMessage: string | null;
   csrfMissing: boolean;
+  /**
+   * P3-T9 — most-recent forecast result for the current
+   * (agent, cadence) pair. `null` before the first fetch lands.
+   */
+  forecast: ScheduleCostForecast | null;
+  /** P3-T9 — true when an in-flight forecast fetch hasn't resolved yet. */
+  forecastLoading: boolean;
   onAgentChange?: (value: string) => void;
   onNameChange?: (value: string) => void;
   onPromptChange?: (value: string) => void;
@@ -73,6 +82,69 @@ export interface ScheduleCreateDialogViewProps {
   onReset?: () => void;
   /** Slot for the cron picker. The wrapper injects `<CronPicker>`. */
   cronPickerSlot?: React.ReactNode;
+}
+
+/**
+ * P3-T9 — render the inline forecast block. Pure: no hooks. The view
+ * decides what copy to show based on the forecast flags; the helper
+ * `formatUsd` handles null / non-finite values uniformly.
+ */
+function CostForecastBlock({
+  forecast,
+  loading,
+}: {
+  forecast: ScheduleCostForecast | null;
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <p
+        className="text-xs text-[hsl(var(--muted-foreground))]"
+        data-testid="cost-forecast-loading"
+      >
+        Computing forecast…
+      </p>
+    );
+  }
+  if (forecast === null) return null;
+  if (forecast.cadenceUnresolved) {
+    return (
+      <p
+        className="text-xs text-[hsl(var(--muted-foreground))]"
+        data-testid="cost-forecast-unresolved"
+      >
+        Forecast unavailable for this cadence.
+      </p>
+    );
+  }
+  if (forecast.insufficientHistory) {
+    return (
+      <div className="space-y-0.5" data-testid="cost-forecast-insufficient">
+        <p className="text-xs text-[hsl(var(--foreground))]">
+          Insufficient history — first run will calibrate forecast.
+        </p>
+        <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
+          ({forecast.runsPerMonth.toLocaleString()} runs / month at this cadence)
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-0.5" data-testid="cost-forecast-estimate">
+      <p className="text-xs text-[hsl(var(--foreground))]">
+        Estimated spend:{" "}
+        <span className="font-mono font-semibold">
+          {formatUsd(forecast.monthlyEstimateUsd)}
+        </span>{" "}
+        / month.
+      </p>
+      <p className="text-[10px] text-[hsl(var(--muted-foreground))]">
+        Likely range {formatUsd(forecast.monthlyLowUsd)} –{" "}
+        {formatUsd(forecast.monthlyHighUsd)} (based on {forecast.sample}{" "}
+        {forecast.sample === 1 ? "sample" : "samples"}).
+      </p>
+    </div>
+  );
 }
 
 function isFormValid(props: ScheduleCreateDialogViewProps): boolean {
@@ -215,6 +287,11 @@ export function ScheduleCreateDialogView(props: ScheduleCreateDialogViewProps) {
 
             {props.cronPickerSlot ?? null}
 
+            <CostForecastBlock
+              forecast={props.forecast}
+              loading={props.forecastLoading}
+            />
+
             <label className="flex flex-col gap-1 text-xs">
               <span className="text-[hsl(var(--muted-foreground))]">
                 Telegram chat id (optional)
@@ -287,6 +364,11 @@ export function ScheduleCreateDialog() {
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [csrfMissing, setCsrfMissing] = useState(false);
+  const [forecast, setForecast] = useState<ScheduleCostForecast | null>(null);
+  const [forecastLoading, setForecastLoading] = useState(false);
+  // Race guard: a slow forecast fetch must not clobber a newer one
+  // (the user may flip presets faster than the network round-trip).
+  const forecastTokenRef = useRef(0);
 
   const ensureAgents = useCallback(async () => {
     if (AGENTS_CACHE.cachedAgents !== undefined) {
@@ -407,6 +489,51 @@ export function ScheduleCreateDialog() {
     }
   }, [agents, agentName]);
 
+  // P3-T9 — refresh the cost forecast whenever the (agent, cadence)
+  // pair changes. The cron picker emits a new `cron` reference on
+  // every keystroke; React's effect-batching keeps us from issuing
+  // more than one fetch per render. The race-guard token discards
+  // out-of-order responses (the user may flip presets faster than
+  // the round-trip).
+  useEffect(() => {
+    if (!open) return;
+    if (agentName.length === 0) return;
+    if (!cron.valid || cron.intervalMinutes === null) {
+      setForecast(null);
+      setForecastLoading(false);
+      return;
+    }
+    const token = ++forecastTokenRef.current;
+    setForecastLoading(true);
+    const fetchInput: {
+      agent: string;
+      intervalMinutes: number;
+      cronExpr?: string;
+    } = {
+      agent: agentName,
+      intervalMinutes: cron.intervalMinutes,
+    };
+    if (cron.cronExpr !== null) fetchInput.cronExpr = cron.cronExpr;
+    const { url, init } = buildCostForecastRequest(fetchInput);
+    fetch(url, init)
+      .then((res) => res.json())
+      .then((json: unknown) => {
+        if (token !== forecastTokenRef.current) return;
+        try {
+          const data = parseScheduleAddResponse<ScheduleCostForecast>(json);
+          setForecast(data);
+        } catch {
+          setForecast(null);
+        }
+        setForecastLoading(false);
+      })
+      .catch(() => {
+        if (token !== forecastTokenRef.current) return;
+        setForecast(null);
+        setForecastLoading(false);
+      });
+  }, [open, agentName, cron.intervalMinutes, cron.cronExpr, cron.valid]);
+
   return (
     <ScheduleCreateDialogView
       open={open}
@@ -422,6 +549,8 @@ export function ScheduleCreateDialog() {
       errorCode={errorCode}
       errorMessage={errorMessage}
       csrfMissing={csrfMissing}
+      forecast={forecast}
+      forecastLoading={forecastLoading}
       onAgentChange={setAgentName}
       onNameChange={setName}
       onPromptChange={setPrompt}
