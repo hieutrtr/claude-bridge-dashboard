@@ -11,6 +11,10 @@
 import { appRouter } from "@/src/server/routers/_app";
 import { LoopFilters } from "@/src/components/loop-filters";
 import { LoopTable } from "@/src/components/loop-table";
+import {
+  StartLoopDialog,
+  StartLoopTrigger,
+} from "@/src/components/start-loop-dialog";
 
 export const dynamic = "force-dynamic";
 
@@ -63,12 +67,15 @@ export default async function LoopsPage({ searchParams }: PageProps) {
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold">Loops</h1>
-        <p className="mt-1 text-sm text-[hsl(var(--muted-foreground))]">
-          All goal loops across every agent. Filter by status or agent;
-          pagination keeps each page at 50 rows (most recent first).
-        </p>
+      <header className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">Loops</h1>
+          <p className="mt-1 text-sm text-[hsl(var(--muted-foreground))]">
+            All goal loops across every agent. Filter by status or agent;
+            pagination keeps each page at 50 rows (most recent first).
+          </p>
+        </div>
+        <StartLoopTrigger />
       </header>
 
       <LoopFilters status={status} agent={agent} />
@@ -79,6 +86,8 @@ export default async function LoopsPage({ searchParams }: PageProps) {
         buildNextHref={buildNextHref}
         isFiltered={isFiltered}
       />
+
+      <StartLoopDialog />
     </div>
   );
 }

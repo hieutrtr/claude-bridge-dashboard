@@ -216,6 +216,17 @@ export interface KillResult {
   alreadyTerminated: boolean;
 }
 
+// P3-T3 — wire shape returned by `loops.start`. The daemon's
+// `bridge_loop` MCP tool returns a text response of the form
+// "Started loop <loop_id>" (or a structured `{ loop_id }` object via
+// the test-side fake); the procedure parses both shapes and
+// normalizes to camelCase before crossing the tRPC boundary so the
+// dialog only ever sees one casing convention. Mirrors `DispatchResult`
+// from Phase 2 T01.
+export interface LoopStartResult {
+  loopId: string;
+}
+
 // T06 (Phase 2) — wire shape returned by `loops.approve` and
 // `loops.reject`. Same idempotency contract as `KillResult`:
 //

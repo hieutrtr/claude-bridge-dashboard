@@ -1161,3 +1161,444 @@ describe("loops.get — input validation", () => {
     expect(caught!.code).toBe("BAD_REQUEST");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────
+// P3-T3 — loops.start (mutation, calls bridge_loop)
+// ─────────────────────────────────────────────────────────────────────
+//
+// Mirrors the Phase 2 T01 `tasks.dispatch` test surface: tmp on-disk
+// DB so the audit row write goes through `getDb()` like prod, and a
+// fake MCP client we shape per-test. Privacy precedent: the goal text
+// MUST NOT appear in `audit_log.payload_json` on either the success
+// or failure path; we pin that explicitly.
+
+describe("loops.start — happy path (text envelope)", () => {
+  it("returns { loopId } parsed from MCP `Started loop <id>` text", async () => {
+    const { client, calls } = fakePool(async () => ({
+      content: [{ type: "text", text: "Started loop loop-abc123" }],
+    }));
+    const req = makeReq(
+      { "x-forwarded-for": "5.6.7.8", "user-agent": "ua/1" },
+      "loops.start",
+    );
+
+    const caller = appRouter.createCaller({ mcp: client, userId: "owner", req });
+    const out = await caller.loops.start({
+      agentName: "alpha",
+      goal: "SECRET_LOOP_GOAL_DO_NOT_LEAK",
+      doneWhen: "manual:",
+      maxIterations: 8,
+      maxCostUsd: 5.0,
+      loopType: "bridge",
+      planFirst: true,
+      passThreshold: 2,
+    });
+    expect(out).toEqual({ loopId: "loop-abc123" });
+
+    // MCP call params snake_case; goal forwarded to daemon verbatim.
+    expect(calls.length).toBe(1);
+    expect(calls[0]!.method).toBe("bridge_loop");
+    expect(calls[0]!.params).toEqual({
+      agent: "alpha",
+      goal: "SECRET_LOOP_GOAL_DO_NOT_LEAK",
+      done_when: "manual:",
+      max_iterations: 8,
+      max_cost_usd: 5.0,
+      loop_type: "bridge",
+      plan_first: true,
+      pass_threshold: 2,
+      user_id: "owner",
+    });
+    expect(calls[0]!.opts?.timeoutMs).toBe(15_000);
+
+    const all = rows(db);
+    expect(all.length).toBe(1);
+    expect(all[0]!.action).toBe("loop.start");
+    expect(all[0]!.resource_type).toBe("loop");
+    expect(all[0]!.resource_id).toBe("loop-abc123");
+    expect(all[0]!.user_id).toBe("owner");
+    expect(all[0]!.ip_hash).not.toBeNull();
+    expect(all[0]!.user_agent).toBe("ua/1");
+    expect(all[0]!.request_id).toMatch(/^[0-9a-f-]{36}$/);
+
+    const payload = JSON.parse(all[0]!.payload_json!);
+    expect(payload).toEqual({
+      agentName: "alpha",
+      doneWhen: "manual:",
+      hasGoal: true,
+      maxIterations: 8,
+      maxCostUsd: 5.0,
+      loopType: "bridge",
+      planFirst: true,
+      passThreshold: 2,
+    });
+    // Privacy invariant — the goal text MUST NOT appear in audit.
+    expect(all[0]!.payload_json).not.toContain("SECRET_LOOP_GOAL_DO_NOT_LEAK");
+  });
+
+  it("accepts the structured `{ loop_id }` shape used by tests", async () => {
+    const { client, calls } = fakePool(async () => ({ loop_id: "loop-xyz" }));
+    const caller = appRouter.createCaller({
+      mcp: client,
+      userId: "owner",
+      req: makeReq({}, "loops.start"),
+    });
+    const out = await caller.loops.start({
+      agentName: "alpha",
+      goal: "ship it",
+      doneWhen: "llm_judge: tests pass",
+    });
+    expect(out).toEqual({ loopId: "loop-xyz" });
+    // Optional fields absent from input → absent from MCP params.
+    expect(calls[0]!.params).toEqual({
+      agent: "alpha",
+      goal: "ship it",
+      done_when: "llm_judge: tests pass",
+      user_id: "owner",
+    });
+
+    const payload = JSON.parse(rows(db)[0]!.payload_json!);
+    // hasGoal sentinel always present on success; optional metadata absent.
+    expect(payload).toEqual({
+      agentName: "alpha",
+      doneWhen: "llm_judge: tests pass",
+      hasGoal: true,
+    });
+  });
+
+  it("forwards channelChatId and records hasChannelChatId sentinel only", async () => {
+    const { client, calls } = fakePool(async () => ({ loop_id: "loop-tg" }));
+    const caller = appRouter.createCaller({
+      mcp: client,
+      userId: "owner",
+      req: makeReq({}, "loops.start"),
+    });
+    await caller.loops.start({
+      agentName: "alpha",
+      goal: "noise",
+      doneWhen: "manual:",
+      channelChatId: "telegram-chat-12345",
+    });
+    expect((calls[0]!.params as { chat_id?: string }).chat_id).toBe(
+      "telegram-chat-12345",
+    );
+    const payload = JSON.parse(rows(db)[0]!.payload_json!);
+    expect(payload.hasChannelChatId).toBe(true);
+    // The literal chat id should not be echoed (treat as semi-opaque).
+    expect(payload.channelChatId).toBeUndefined();
+  });
+
+  it("omits user_id from MCP params when caller is unauthenticated", async () => {
+    const { client, calls } = fakePool(async () => ({ loop_id: "loop-anon" }));
+    const caller = appRouter.createCaller({
+      mcp: client,
+      userId: null,
+      req: makeReq({}, "loops.start"),
+    });
+    await caller.loops.start({
+      agentName: "alpha",
+      goal: "x",
+      doneWhen: "manual:",
+    });
+    expect((calls[0]!.params as { user_id?: string }).user_id).toBeUndefined();
+    expect(rows(db)[0]!.user_id).toBeNull();
+  });
+});
+
+describe("loops.start — input validation", () => {
+  it("rejects empty goal with BAD_REQUEST and writes no audit row", async () => {
+    const { client, calls } = fakePool(async () => ({ loop_id: "loop-1" }));
+    const caller = appRouter.createCaller({
+      mcp: client,
+      userId: "owner",
+      req: makeReq({}, "loops.start"),
+    });
+    let caught: TRPCError | null = null;
+    try {
+      await caller.loops.start({
+        agentName: "alpha",
+        goal: "",
+        doneWhen: "manual:",
+      });
+    } catch (e) {
+      caught = e as TRPCError;
+    }
+    expect(caught!.code).toBe("BAD_REQUEST");
+    expect(calls.length).toBe(0);
+    expect(rows(db).length).toBe(0);
+  });
+
+  it("rejects goal > 32_000 chars", async () => {
+    const { client, calls } = fakePool(async () => ({ loop_id: "loop-1" }));
+    const caller = appRouter.createCaller({
+      mcp: client,
+      userId: "owner",
+      req: makeReq({}, "loops.start"),
+    });
+    let caught: TRPCError | null = null;
+    try {
+      await caller.loops.start({
+        agentName: "alpha",
+        goal: "x".repeat(32_001),
+        doneWhen: "manual:",
+      });
+    } catch (e) {
+      caught = e as TRPCError;
+    }
+    expect(caught!.code).toBe("BAD_REQUEST");
+    expect(calls.length).toBe(0);
+  });
+
+  it("rejects empty agentName", async () => {
+    const { client } = fakePool(async () => ({ loop_id: "loop-1" }));
+    const caller = appRouter.createCaller({
+      mcp: client,
+      userId: "owner",
+      req: makeReq({}, "loops.start"),
+    });
+    let caught: TRPCError | null = null;
+    try {
+      await caller.loops.start({
+        agentName: "",
+        goal: "x",
+        doneWhen: "manual:",
+      });
+    } catch (e) {
+      caught = e as TRPCError;
+    }
+    expect(caught!.code).toBe("BAD_REQUEST");
+  });
+
+  it("rejects malformed doneWhen (no recognized prefix)", async () => {
+    const { client, calls } = fakePool(async () => ({ loop_id: "loop-1" }));
+    const caller = appRouter.createCaller({
+      mcp: client,
+      userId: "owner",
+      req: makeReq({}, "loops.start"),
+    });
+    let caught: TRPCError | null = null;
+    try {
+      await caller.loops.start({
+        agentName: "alpha",
+        goal: "x",
+        doneWhen: "wrong-prefix: anything",
+      });
+    } catch (e) {
+      caught = e as TRPCError;
+    }
+    expect(caught!.code).toBe("BAD_REQUEST");
+    expect(calls.length).toBe(0);
+  });
+
+  it("accepts every documented doneWhen prefix", async () => {
+    const prefixes = [
+      "command: bun test",
+      "file_exists: /tmp/done",
+      "file_contains: README.md OK",
+      "llm_judge: tests pass",
+      "manual:",
+    ];
+    for (const doneWhen of prefixes) {
+      const { client } = fakePool(async () => ({ loop_id: `loop-${doneWhen.slice(0, 4)}` }));
+      const caller = appRouter.createCaller({
+        mcp: client,
+        userId: "owner",
+        req: makeReq({}, "loops.start"),
+      });
+      const out = await caller.loops.start({
+        agentName: "alpha",
+        goal: "x",
+        doneWhen,
+      });
+      expect(out.loopId).toMatch(/^loop-/);
+    }
+  });
+
+  it("rejects out-of-range maxIterations", async () => {
+    const { client, calls } = fakePool(async () => ({ loop_id: "loop-1" }));
+    const caller = appRouter.createCaller({
+      mcp: client,
+      userId: "owner",
+      req: makeReq({}, "loops.start"),
+    });
+    let caught: TRPCError | null = null;
+    try {
+      await caller.loops.start({
+        agentName: "alpha",
+        goal: "x",
+        doneWhen: "manual:",
+        maxIterations: 0,
+      });
+    } catch (e) {
+      caught = e as TRPCError;
+    }
+    expect(caught!.code).toBe("BAD_REQUEST");
+    expect(calls.length).toBe(0);
+  });
+
+  it("rejects negative or zero maxCostUsd", async () => {
+    const { client } = fakePool(async () => ({ loop_id: "loop-1" }));
+    const caller = appRouter.createCaller({
+      mcp: client,
+      userId: "owner",
+      req: makeReq({}, "loops.start"),
+    });
+    let caught: TRPCError | null = null;
+    try {
+      await caller.loops.start({
+        agentName: "alpha",
+        goal: "x",
+        doneWhen: "manual:",
+        maxCostUsd: 0,
+      });
+    } catch (e) {
+      caught = e as TRPCError;
+    }
+    expect(caught!.code).toBe("BAD_REQUEST");
+  });
+});
+
+describe("loops.start — malformed daemon response", () => {
+  it("throws INTERNAL_SERVER_ERROR and audits malformed_response", async () => {
+    const { client } = fakePool(async () => ({ ok: true })); // no loop_id, no content
+    const caller = appRouter.createCaller({
+      mcp: client,
+      userId: "owner",
+      req: makeReq({}, "loops.start"),
+    });
+    let caught: TRPCError | null = null;
+    try {
+      await caller.loops.start({
+        agentName: "alpha",
+        goal: "secret-goal-text",
+        doneWhen: "manual:",
+      });
+    } catch (e) {
+      caught = e as TRPCError;
+    }
+    expect(caught!.code).toBe("INTERNAL_SERVER_ERROR");
+    expect(caught!.message).toMatch(/malformed/i);
+
+    const all = rows(db);
+    expect(all.length).toBe(1);
+    expect(all[0]!.action).toBe("loop.start.error");
+    expect(all[0]!.resource_id).toBeNull();
+    const payload = JSON.parse(all[0]!.payload_json!);
+    expect(payload.code).toBe("malformed_response");
+    expect(payload.agentName).toBe("alpha");
+    // Privacy on the error path too.
+    expect(all[0]!.payload_json).not.toContain("secret-goal-text");
+  });
+
+  it("throws on text envelope without a 'Started loop X' line", async () => {
+    const { client } = fakePool(async () => ({
+      content: [{ type: "text", text: "Loop creation failed: agent busy" }],
+    }));
+    const caller = appRouter.createCaller({
+      mcp: client,
+      userId: "owner",
+      req: makeReq({}, "loops.start"),
+    });
+    let caught: TRPCError | null = null;
+    try {
+      await caller.loops.start({
+        agentName: "alpha",
+        goal: "x",
+        doneWhen: "manual:",
+      });
+    } catch (e) {
+      caught = e as TRPCError;
+    }
+    expect(caught!.code).toBe("INTERNAL_SERVER_ERROR");
+  });
+});
+
+describe("loops.start — MCP error mapping", () => {
+  type Case = {
+    name: string;
+    poolCode: McpPoolError["code"];
+    trpcCode: TRPCError["code"];
+  };
+  const cases: Case[] = [
+    { name: "MCP_TIMEOUT → TIMEOUT", poolCode: "MCP_TIMEOUT", trpcCode: "TIMEOUT" },
+    {
+      name: "MCP_BACKPRESSURE → TOO_MANY_REQUESTS",
+      poolCode: "MCP_BACKPRESSURE",
+      trpcCode: "TOO_MANY_REQUESTS",
+    },
+    {
+      name: "MCP_CONNECTION_LOST → INTERNAL_SERVER_ERROR",
+      poolCode: "MCP_CONNECTION_LOST",
+      trpcCode: "INTERNAL_SERVER_ERROR",
+    },
+    {
+      name: "MCP_SPAWN_FAILED → INTERNAL_SERVER_ERROR",
+      poolCode: "MCP_SPAWN_FAILED",
+      trpcCode: "INTERNAL_SERVER_ERROR",
+    },
+    {
+      name: "MCP_ABORTED → CLIENT_CLOSED_REQUEST",
+      poolCode: "MCP_ABORTED",
+      trpcCode: "CLIENT_CLOSED_REQUEST",
+    },
+    {
+      name: "MCP_RPC_ERROR → INTERNAL_SERVER_ERROR",
+      poolCode: "MCP_RPC_ERROR",
+      trpcCode: "INTERNAL_SERVER_ERROR",
+    },
+  ];
+
+  for (const c of cases) {
+    it(c.name, async () => {
+      const { client } = fakePool(async () => {
+        throw new McpPoolError(c.poolCode, "boom");
+      });
+      const caller = appRouter.createCaller({
+        mcp: client,
+        userId: "owner",
+        req: makeReq({}, "loops.start"),
+      });
+      let caught: TRPCError | null = null;
+      try {
+        await caller.loops.start({
+          agentName: "alpha",
+          goal: "private goal text",
+          doneWhen: "manual:",
+        });
+      } catch (e) {
+        caught = e as TRPCError;
+      }
+      expect(caught).toBeInstanceOf(TRPCError);
+      expect(caught!.code).toBe(c.trpcCode);
+
+      const all = rows(db);
+      expect(all.length).toBe(1);
+      expect(all[0]!.action).toBe("loop.start.error");
+      expect(all[0]!.resource_id).toBeNull();
+      const payload = JSON.parse(all[0]!.payload_json!);
+      expect(payload.code).toBe(c.poolCode);
+      expect(payload.agentName).toBe("alpha");
+      // Privacy on every error branch.
+      expect(all[0]!.payload_json).not.toContain("private goal text");
+    });
+  }
+});
+
+describe("loops.start — MCP context missing", () => {
+  it("returns INTERNAL_SERVER_ERROR when no MCP client wired", async () => {
+    const caller = appRouter.createCaller({ userId: "owner", req: makeReq({}, "loops.start") });
+    let caught: TRPCError | null = null;
+    try {
+      await caller.loops.start({
+        agentName: "alpha",
+        goal: "x",
+        doneWhen: "manual:",
+      });
+    } catch (e) {
+      caught = e as TRPCError;
+    }
+    expect(caught!.code).toBe("INTERNAL_SERVER_ERROR");
+    // No audit row — context guard fires before the audit envelope.
+    expect(rows(db).length).toBe(0);
+  });
+});

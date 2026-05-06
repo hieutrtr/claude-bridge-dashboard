@@ -42,6 +42,7 @@ import type {
   LoopIterationRow,
   LoopListPage,
   LoopRejectResult,
+  LoopStartResult,
 } from "../dto";
 
 // P3-T1 — `loops.list` input. Read-only query over the vendored
@@ -129,6 +130,70 @@ const DETAIL_DTO_SELECTION = {
   consecutivePasses: loops.consecutivePasses,
   consecutiveFailures: loops.consecutiveFailures,
 } as const;
+
+// P3-T3 — `loops.start` input. Mirrors the daemon `bridge_loop` MCP
+// tool surface (see CLAUDE.md) trimmed to what the dialog sends.
+//
+// `goal` 32_000-char cap matches `tasks.dispatch.prompt` (Phase 2 T01)
+// — well above any human goal and below stdio framing concerns. The
+// goal text is forwarded to the daemon but **never** echoed into
+// `audit_log.payload_json` (privacy precedent §c — same rule the audit
+// log applies to dispatch prompts and reject reasons). Audit records
+// `hasGoal: true` instead.
+//
+// `doneWhen` validation runs both client-side (UX feedback) and here
+// — the daemon's `LoopEvaluator` accepts any of `command:`,
+// `file_exists:`, `file_contains:`, `llm_judge:`, or `manual:` prefix.
+// Empty body after the prefix (e.g. `manual:`) is intentional — the
+// daemon treats it as a marker.
+const DONE_WHEN_PATTERN =
+  /^(command|file_exists|file_contains|llm_judge|manual):.*$/;
+
+const StartInput = z.object({
+  agentName: z.string().min(1).max(128),
+  goal: z.string().min(1).max(32_000),
+  doneWhen: z
+    .string()
+    .min(1)
+    .max(2_000)
+    .regex(DONE_WHEN_PATTERN, "doneWhen must start with command:, file_exists:, file_contains:, llm_judge:, or manual:"),
+  maxIterations: z.number().int().min(1).max(200).optional(),
+  maxCostUsd: z.number().positive().max(10_000).optional(),
+  loopType: z.enum(["bridge", "agent", "auto"]).optional(),
+  planFirst: z.boolean().optional(),
+  passThreshold: z.number().int().min(1).max(10).optional(),
+  channelChatId: z.string().min(1).max(128).optional(),
+});
+
+const LOOP_START_TIMEOUT_MS = 15_000;
+
+interface BridgeLoopResult {
+  loop_id?: unknown;
+  content?: unknown;
+}
+
+// Daemon's `bridge_loop` returns the MCP `text()` envelope —
+// `{ content: [{ type: "text", text: "Started loop <id>" }] }`. The
+// in-process tests inject `{ loop_id: "..." }` directly. Accept
+// either; return null if neither shape yields a valid id so the
+// procedure can audit `malformed_response` cleanly.
+function extractLoopId(value: unknown): string | null {
+  if (value === null || typeof value !== "object") return null;
+  const v = value as BridgeLoopResult;
+  if (typeof v.loop_id === "string" && v.loop_id.length > 0) {
+    return v.loop_id;
+  }
+  if (Array.isArray(v.content)) {
+    for (const part of v.content) {
+      if (part === null || typeof part !== "object") continue;
+      const p = part as { type?: unknown; text?: unknown };
+      if (p.type !== "text" || typeof p.text !== "string") continue;
+      const m = p.text.match(/Started loop\s+(\S+)/);
+      if (m && m[1]!.length > 0) return m[1]!;
+    }
+  }
+  return null;
+}
 
 const ApproveInput = z.object({
   loopId: z.string().min(1).max(128),
@@ -257,6 +322,137 @@ export const loopsRouter = router({
         iterationsTruncated: totalIterations > LOOP_ITERATIONS_LIMIT,
         totalIterations,
       };
+    }),
+
+  // P3-T3 — start a new goal loop via the daemon's `bridge_loop`
+  // MCP tool. Same shape as Phase 2 T01 `tasks.dispatch`: CSRF +
+  // rate-limit guards run at the route handler; this procedure
+  // handles the audit row + error mapping. We never insert into the
+  // `loops` table directly — the daemon owns loop lifecycle.
+  //
+  // Audit shape (privacy precedent §c — goal text NEVER echoed):
+  //   success → action="loop.start", resource_id=loopId,
+  //             payload={ agentName, doneWhen, maxIterations?,
+  //                       maxCostUsd?, loopType?, planFirst?,
+  //                       passThreshold?, hasGoal:true,
+  //                       hasChannelChatId? }
+  //   failure → action="loop.start.error", resource_id=null,
+  //             payload={ agentName, doneWhen, code }
+  //
+  // The `goal` text is `bridge_loop`'s primary input — the daemon
+  // writes it to `loops.goal` so the audit row stays a minimal index,
+  // not a duplicate. Same rule we apply to `tasks.dispatch.prompt`
+  // and `loops.reject.reason`.
+  start: publicProcedure
+    .input(StartInput)
+    .mutation(async ({ input, ctx }): Promise<LoopStartResult> => {
+      if (!ctx.mcp) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "MCP client not configured on tRPC context",
+        });
+      }
+
+      const params: {
+        agent: string;
+        goal: string;
+        done_when: string;
+        max_iterations?: number;
+        max_cost_usd?: number;
+        loop_type?: string;
+        plan_first?: boolean;
+        pass_threshold?: number;
+        chat_id?: string;
+        user_id?: string;
+      } = {
+        agent: input.agentName,
+        goal: input.goal,
+        done_when: input.doneWhen,
+      };
+      if (input.maxIterations !== undefined) params.max_iterations = input.maxIterations;
+      if (input.maxCostUsd !== undefined) params.max_cost_usd = input.maxCostUsd;
+      if (input.loopType !== undefined) params.loop_type = input.loopType;
+      if (input.planFirst !== undefined) params.plan_first = input.planFirst;
+      if (input.passThreshold !== undefined) params.pass_threshold = input.passThreshold;
+      if (input.channelChatId !== undefined) params.chat_id = input.channelChatId;
+      if (ctx.userId !== undefined && ctx.userId !== null) params.user_id = ctx.userId;
+
+      const auditBase = {
+        resourceType: "loop" as const,
+        userId: ctx.userId ?? null,
+        req: ctx.req,
+      };
+
+      // Audit failure-payload base — `goal` is intentionally absent;
+      // the dialog form sends it to the daemon but the audit only
+      // records the metadata fields the user can reasonably want to
+      // forensically replay later. `hasGoal:true` is the privacy
+      // sentinel that says "yes the daemon got a goal value".
+      const failurePayloadBase: Record<string, unknown> = {
+        agentName: input.agentName,
+        doneWhen: input.doneWhen,
+      };
+      if (input.maxIterations !== undefined) failurePayloadBase.maxIterations = input.maxIterations;
+      if (input.maxCostUsd !== undefined) failurePayloadBase.maxCostUsd = input.maxCostUsd;
+      if (input.loopType !== undefined) failurePayloadBase.loopType = input.loopType;
+      if (input.planFirst !== undefined) failurePayloadBase.planFirst = input.planFirst;
+      if (input.passThreshold !== undefined) failurePayloadBase.passThreshold = input.passThreshold;
+
+      let result: unknown;
+      try {
+        result = await ctx.mcp.call("bridge_loop", params, {
+          timeoutMs: LOOP_START_TIMEOUT_MS,
+        });
+      } catch (err) {
+        appendAudit({
+          ...auditBase,
+          action: "loop.start.error",
+          resourceId: null,
+          payload: {
+            ...failurePayloadBase,
+            code: auditFailureCode(err),
+          },
+        });
+        throw mapMcpErrorToTrpc(err);
+      }
+
+      const loopId = extractLoopId(result);
+      if (loopId === null) {
+        appendAudit({
+          ...auditBase,
+          action: "loop.start.error",
+          resourceId: null,
+          payload: {
+            ...failurePayloadBase,
+            code: "malformed_response",
+          },
+        });
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "daemon returned malformed loop start response",
+        });
+      }
+
+      const successPayload: Record<string, unknown> = {
+        agentName: input.agentName,
+        doneWhen: input.doneWhen,
+        hasGoal: true,
+      };
+      if (input.maxIterations !== undefined) successPayload.maxIterations = input.maxIterations;
+      if (input.maxCostUsd !== undefined) successPayload.maxCostUsd = input.maxCostUsd;
+      if (input.loopType !== undefined) successPayload.loopType = input.loopType;
+      if (input.planFirst !== undefined) successPayload.planFirst = input.planFirst;
+      if (input.passThreshold !== undefined) successPayload.passThreshold = input.passThreshold;
+      if (input.channelChatId !== undefined) successPayload.hasChannelChatId = true;
+
+      appendAudit({
+        ...auditBase,
+        action: "loop.start",
+        resourceId: loopId,
+        payload: successPayload,
+      });
+
+      return { loopId };
     }),
 
   // P2-T06 — approve a loop sitting in `pending_approval=true`.
