@@ -77,7 +77,7 @@ describe("buildDispatchRequest", () => {
     );
     expect(typeof init.body).toBe("string");
     const parsed = JSON.parse(init.body as string);
-    expect(parsed).toEqual({ json: { agentName: "alpha", prompt: "hi" } });
+    expect(parsed).toEqual({ agentName: "alpha", prompt: "hi" });
   });
 
   it("includes the model field when provided", () => {
@@ -87,7 +87,9 @@ describe("buildDispatchRequest", () => {
     );
     const parsed = JSON.parse(init.body as string);
     expect(parsed).toEqual({
-      json: { agentName: "alpha", prompt: "hi", model: "sonnet" },
+      agentName: "alpha",
+      prompt: "hi",
+      model: "sonnet",
     });
   });
 });

@@ -33,7 +33,7 @@ export function buildKillTaskRequest(
         "content-type": "application/json",
         [CSRF_HEADER]: csrfToken,
       },
-      body: JSON.stringify({ json: { id: input.id } }),
+      body: JSON.stringify({ id: input.id }),
     },
   };
 }

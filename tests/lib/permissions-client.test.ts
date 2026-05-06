@@ -29,23 +29,21 @@ describe("buildRespondRequest", () => {
     expect(headers[CSRF_HEADER]).toBe("csrf.tok");
   });
 
-  it("wraps the input as { json: { id, decision } }", () => {
+  it("emits the input flat on the body (no json wrapper)", () => {
     const { init } = buildRespondRequest(
       { id: "perm-2", decision: "approved" },
       "tok",
     );
     expect(typeof init.body).toBe("string");
     const parsed = JSON.parse(init.body as string);
-    expect(parsed).toEqual({
-      json: { id: "perm-2", decision: "approved" },
-    });
+    expect(parsed).toEqual({ id: "perm-2", decision: "approved" });
   });
 
   it("passes the decision verbatim", () => {
     for (const decision of ["approved", "denied"] as const) {
       const { init } = buildRespondRequest({ id: "x", decision }, "tok");
-      const parsed = JSON.parse(init.body as string);
-      expect(parsed.json.decision).toBe(decision);
+      const parsed = JSON.parse(init.body as string) as Record<string, unknown>;
+      expect(parsed.decision).toBe(decision);
     }
   });
 });

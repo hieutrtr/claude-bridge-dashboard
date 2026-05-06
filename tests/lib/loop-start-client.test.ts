@@ -74,11 +74,9 @@ describe("buildLoopStartRequest", () => {
     expect(headers["content-type"]).toBe("application/json");
     expect(headers[CSRF_HEADER]).toBe("csrf-tok-123");
     expect(JSON.parse(init.body as string)).toEqual({
-      json: {
-        agentName: "alpha",
-        goal: "ship it",
-        doneWhen: "manual:",
-      },
+      agentName: "alpha",
+      goal: "ship it",
+      doneWhen: "manual:",
     });
   });
 
@@ -95,7 +93,7 @@ describe("buildLoopStartRequest", () => {
       "tok",
     );
     const body = JSON.parse(init.body as string);
-    expect(body.json).toEqual({
+    expect(body).toEqual({
       agentName: "alpha",
       goal: "ship it",
       doneWhen: "manual:",

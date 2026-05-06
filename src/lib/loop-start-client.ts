@@ -7,9 +7,9 @@
 // test (no jsdom) while the dialog wires the real DOM bits.
 //
 // Wire format references (mirrors dispatch-client.ts):
-//   - tRPC v11 fetch adapter w/o a transformer accepts POST body as
-//     `{json: <input>}` and returns `{result: {data: <output>}}` for
-//     the success envelope and `{error: {message, code, data: {...}}}`
+//   - tRPC v11 fetch adapter w/o a transformer accepts the POST body
+//     as the raw input object and returns `{result: {data: <output>}}`
+//     for the success envelope and `{error: {message, code, data: {...}}}`
 //     for the error envelope.
 //   - CSRF cookie name + header constants come from `src/lib/csrf.ts`
 //     so the wire contract stays single-sourced.
@@ -138,7 +138,7 @@ export function buildLoopStartRequest(
         "content-type": "application/json",
         [CSRF_HEADER]: csrfToken,
       },
-      body: JSON.stringify({ json }),
+      body: JSON.stringify(json),
     },
   };
 }

@@ -31,3 +31,21 @@ export const FIXTURE_AGENT = {
     resultPhrase: "E2E smoke result",
   },
 } as const;
+
+// Phase 3 — pre-seeded fixtures consumed by the schedules-flow + loop-
+// flow specs. A separate agent so the smoke spec's task table doesn't
+// get polluted with schedule/loop noise.
+export const FIXTURE_SCHEDULE = {
+  name: "fixture-hourly",
+  prompt: "Hourly check on the fixture agent",
+} as const;
+
+export const FIXTURE_LOOP_RUNNING = {
+  loopId: "fixture-loop-running",
+  goal: "Investigate the running loop fixture goal",
+} as const;
+
+export const FIXTURE_LOOP_PENDING_APPROVAL = {
+  loopId: "fixture-loop-approval",
+  goal: "Decide whether to ship the change",
+} as const;

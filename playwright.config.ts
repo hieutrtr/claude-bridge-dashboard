@@ -55,6 +55,11 @@ export default defineConfig({
       DASHBOARD_PASSWORD: FIXTURE_PASSWORD,
       JWT_SECRET: FIXTURE_JWT_SECRET,
       NODE_ENV: "development",
+      // Phase 3 — wire the dashboard's MCP pool to a fake stdio daemon
+      // so schedule/loop mutation specs can drive end-to-end flows
+      // without spawning the real `bridge` binary. The fake reads/
+      // writes the same fixture SQLite at BRIDGE_DB.
+      CLAUDE_BRIDGE_MCP_COMMAND: "bun tests/e2e/fake-mcp.ts",
     },
   },
 });

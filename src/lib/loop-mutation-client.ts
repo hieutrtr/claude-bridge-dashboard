@@ -56,7 +56,7 @@ function buildPost(
         "content-type": "application/json",
         [CSRF_HEADER]: csrfToken,
       },
-      body: JSON.stringify({ json: payload }),
+      body: JSON.stringify(payload),
     },
   };
 }

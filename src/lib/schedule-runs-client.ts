@@ -5,7 +5,8 @@
 // Wire format reference:
 //   - tRPC v11 fetch adapter encodes a query's input on the URL:
 //     `GET /api/trpc/<proc>?input=<URL-encoded JSON>`. The default
-//     (no transformer) jsonifier expects `{ "json": <input> }`.
+//     (no transformer) jsonifier reads the value as the raw input —
+//     no `{json: <input>}` wrapper.
 //   - GET requests are exempt from CSRF (same as `agents.list` on
 //     the dispatch dialog) — the guard short-circuits safe methods.
 //
@@ -43,7 +44,7 @@ export function buildScheduleRunsRequest(
 ): { url: string; init: RequestInit } {
   const json: ScheduleRunsInput =
     input.limit === undefined ? { id: input.id } : { id: input.id, limit: input.limit };
-  const encoded = encodeURIComponent(JSON.stringify({ json }));
+  const encoded = encodeURIComponent(JSON.stringify(json));
   return {
     url: `${SCHEDULE_RUNS_URL}?input=${encoded}`,
     init: { method: "GET" },

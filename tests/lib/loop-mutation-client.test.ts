@@ -25,7 +25,7 @@ describe("buildLoopCancelRequest", () => {
     const headers = init.headers as Record<string, string>;
     expect(headers["content-type"]).toBe("application/json");
     expect(headers[CSRF_HEADER]).toBe("csrf-tok");
-    expect(JSON.parse(init.body as string)).toEqual({ json: { loopId: "loop-1" } });
+    expect(JSON.parse(init.body as string)).toEqual({ loopId: "loop-1" });
   });
 });
 
@@ -33,7 +33,7 @@ describe("buildLoopApproveRequest", () => {
   it("targets /loops.approve with the loopId payload", () => {
     const { url, init } = buildLoopApproveRequest({ loopId: "loop-2" }, "tok2");
     expect(url).toBe(LOOP_APPROVE_URL);
-    expect(JSON.parse(init.body as string)).toEqual({ json: { loopId: "loop-2" } });
+    expect(JSON.parse(init.body as string)).toEqual({ loopId: "loop-2" });
   });
 });
 
@@ -44,7 +44,8 @@ describe("buildLoopRejectRequest", () => {
       "tok",
     );
     expect(JSON.parse(init.body as string)).toEqual({
-      json: { loopId: "loop-3", reason: "bad output" },
+      loopId: "loop-3",
+      reason: "bad output",
     });
   });
 
@@ -52,8 +53,8 @@ describe("buildLoopRejectRequest", () => {
     const { init, url } = buildLoopRejectRequest({ loopId: "loop-3" }, "tok");
     expect(url).toBe(LOOP_REJECT_URL);
     const body = JSON.parse(init.body as string);
-    expect(body).toEqual({ json: { loopId: "loop-3" } });
-    expect(Object.keys(body.json)).not.toContain("reason");
+    expect(body).toEqual({ loopId: "loop-3" });
+    expect(Object.keys(body)).not.toContain("reason");
   });
 });
 

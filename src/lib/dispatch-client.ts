@@ -6,12 +6,13 @@
 // the dialog wire the real DOM bits in one place.
 //
 // Wire format references:
-//   - tRPC v11 fetch adapter w/o a transformer accepts POST body as
-//     `{json: <input>}` and returns `{result: {data: <output>}}` for
-//     the success envelope and `{error: {message, code, data: {...}}}`
-//     for the error envelope. We pin the wrapper key `json` because
-//     the server uses the default jsonifier (no superjson on this
-//     repo).
+//   - tRPC v11 fetch adapter w/o a transformer accepts the POST body as
+//     the raw input object — `{<field>: <value>, ...}` — and returns
+//     `{result: {data: <output>}}` for the success envelope and
+//     `{error: {message, code, data: {...}}}` for the error envelope.
+//     A `{json: <input>}` wrapper would have the server re-parse the
+//     wrapper as the input itself; the dashboard does not run a
+//     superjson transformer on either side.
 //   - CSRF cookie name + header constants are shared with the server
 //     (`src/server/csrf-guard.ts`) via `src/lib/csrf.ts` so the wire
 //     contract stays single-sourced.
@@ -80,7 +81,7 @@ export function buildDispatchRequest(
         "content-type": "application/json",
         [CSRF_HEADER]: csrfToken,
       },
-      body: JSON.stringify({ json }),
+      body: JSON.stringify(json),
     },
   };
 }

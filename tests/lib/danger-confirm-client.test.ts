@@ -38,19 +38,17 @@ describe("buildKillTaskRequest", () => {
     expect(headers[CSRF_HEADER]).toBe("csrf-x");
   });
 
-  it("wraps the input as {json:{id}} on the body", () => {
+  it("emits the input flat on the body (no json wrapper)", () => {
     const { init } = buildKillTaskRequest({ id: 42 }, "csrf-x");
-    expect(init.body).toBe('{"json":{"id":42}}');
+    expect(init.body).toBe('{"id":42}');
     const parsed = JSON.parse(init.body as string);
-    expect(parsed).toEqual({ json: { id: 42 } });
+    expect(parsed).toEqual({ id: 42 });
   });
 
   it("does not include unrelated keys (no agentName / model leakage)", () => {
     const { init } = buildKillTaskRequest({ id: 7 }, "csrf-x");
-    const parsed = JSON.parse(init.body as string) as {
-      json: Record<string, unknown>;
-    };
-    expect(Object.keys(parsed.json)).toEqual(["id"]);
+    const parsed = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(Object.keys(parsed)).toEqual(["id"]);
   });
 });
 

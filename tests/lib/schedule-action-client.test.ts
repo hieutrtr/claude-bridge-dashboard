@@ -29,7 +29,7 @@ describe("buildScheduleActionRequest", () => {
       const headers = init.headers as Record<string, string>;
       expect(headers["content-type"]).toBe("application/json");
       expect(headers[CSRF_HEADER]).toBe("csrf-tok");
-      expect(JSON.parse(init.body as string)).toEqual({ json: { id: 42 } });
+      expect(JSON.parse(init.body as string)).toEqual({ id: 42 });
     });
   }
 

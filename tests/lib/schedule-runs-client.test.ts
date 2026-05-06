@@ -20,7 +20,7 @@ describe("buildScheduleRunsRequest", () => {
     const decoded = JSON.parse(
       decodeURIComponent(url.split("?input=")[1]!),
     );
-    expect(decoded).toEqual({ json: { id: 42 } });
+    expect(decoded).toEqual({ id: 42 });
     expect(url.startsWith(SCHEDULE_RUNS_URL)).toBe(true);
   });
 
@@ -29,7 +29,7 @@ describe("buildScheduleRunsRequest", () => {
     const decoded = JSON.parse(
       decodeURIComponent(url.split("?input=")[1]!),
     );
-    expect(decoded).toEqual({ json: { id: 7, limit: 5 } });
+    expect(decoded).toEqual({ id: 7, limit: 5 });
   });
 
   it("does not include any CSRF header (GET — safe method)", () => {

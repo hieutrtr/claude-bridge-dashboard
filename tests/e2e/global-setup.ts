@@ -28,7 +28,10 @@ import {
   FIXTURE_DB,
   FIXTURE_DIR,
   FIXTURE_JWT_SECRET,
+  FIXTURE_LOOP_PENDING_APPROVAL,
+  FIXTURE_LOOP_RUNNING,
   FIXTURE_PASSWORD,
+  FIXTURE_SCHEDULE,
 } from "./fixture";
 
 const SCHEMA_DDL = `
@@ -70,6 +73,66 @@ const SCHEMA_DDL = `
     channel_chat_id TEXT,
     channel_message_id TEXT,
     user_id TEXT
+  );
+  CREATE TABLE schedules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    agent_name TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    interval_minutes INTEGER,
+    cron_expr TEXT,
+    run_once INTEGER DEFAULT 0,
+    enabled INTEGER DEFAULT 1,
+    run_count INTEGER DEFAULT 0,
+    consecutive_errors INTEGER DEFAULT 0,
+    last_run_at NUMERIC,
+    next_run_at NUMERIC,
+    last_error TEXT,
+    channel TEXT DEFAULT 'cli',
+    channel_chat_id TEXT,
+    user_id TEXT,
+    created_at NUMERIC DEFAULT CURRENT_TIMESTAMP,
+    updated_at NUMERIC DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE loops (
+    loop_id TEXT PRIMARY KEY,
+    agent TEXT NOT NULL,
+    project TEXT NOT NULL,
+    goal TEXT NOT NULL,
+    done_when TEXT NOT NULL,
+    loop_type TEXT NOT NULL DEFAULT 'bridge',
+    status TEXT NOT NULL DEFAULT 'running',
+    max_iterations INTEGER NOT NULL DEFAULT 10,
+    max_consecutive_failures INTEGER NOT NULL DEFAULT 3,
+    current_iteration INTEGER NOT NULL DEFAULT 0,
+    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+    total_cost_usd REAL NOT NULL,
+    max_cost_usd REAL,
+    pending_approval INTEGER NOT NULL DEFAULT 0,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    finish_reason TEXT,
+    current_task_id TEXT,
+    channel TEXT,
+    channel_chat_id TEXT,
+    user_id TEXT,
+    plan TEXT,
+    plan_enabled INTEGER NOT NULL DEFAULT 0,
+    pass_threshold INTEGER NOT NULL DEFAULT 1,
+    consecutive_passes INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE TABLE loop_iterations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    loop_id TEXT NOT NULL,
+    iteration_num INTEGER NOT NULL,
+    task_id TEXT,
+    prompt TEXT,
+    result_summary TEXT,
+    done_check_passed INTEGER NOT NULL DEFAULT 0,
+    cost_usd REAL NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    status TEXT NOT NULL DEFAULT 'running'
   );
 `;
 
@@ -147,6 +210,60 @@ export default async function globalSetup(): Promise<void> {
       "standard",
     ],
   );
+
+  // Phase 3 — pre-seeded schedule + loop fixtures. The schedules-flow
+  // spec lists/pauses/deletes this row; the loop-flow spec navigates
+  // into the running loop's detail page to cancel it, and into the
+  // pending-approval loop to exercise the approve gate.
+  sqlite.run(
+    `INSERT INTO schedules
+       (name, agent_name, prompt, interval_minutes, enabled, run_count,
+        consecutive_errors, channel, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 1, 0, 0, 'cli', ?, ?)`,
+    [
+      FIXTURE_SCHEDULE.name,
+      FIXTURE_AGENT.name,
+      FIXTURE_SCHEDULE.prompt,
+      60,
+      "2026-05-04 11:00:00",
+      "2026-05-04 11:00:00",
+    ],
+  );
+
+  sqlite.run(
+    `INSERT INTO loops
+       (loop_id, agent, project, goal, done_when, loop_type, status,
+        max_iterations, max_consecutive_failures, current_iteration,
+        consecutive_failures, total_cost_usd, pending_approval,
+        started_at, plan_enabled, pass_threshold, consecutive_passes)
+     VALUES (?, ?, ?, ?, 'manual:', 'bridge', 'running', 10, 3, 1, 0,
+             0.05, 0, ?, 0, 1, 0)`,
+    [
+      FIXTURE_LOOP_RUNNING.loopId,
+      FIXTURE_AGENT.name,
+      FIXTURE_AGENT.projectDir,
+      FIXTURE_LOOP_RUNNING.goal,
+      "2026-05-05 09:00:00",
+    ],
+  );
+
+  sqlite.run(
+    `INSERT INTO loops
+       (loop_id, agent, project, goal, done_when, loop_type, status,
+        max_iterations, max_consecutive_failures, current_iteration,
+        consecutive_failures, total_cost_usd, pending_approval,
+        started_at, plan_enabled, pass_threshold, consecutive_passes)
+     VALUES (?, ?, ?, ?, 'manual:', 'bridge', 'running', 5, 3, 2, 0,
+             0.20, 1, ?, 0, 1, 1)`,
+    [
+      FIXTURE_LOOP_PENDING_APPROVAL.loopId,
+      FIXTURE_AGENT.name,
+      FIXTURE_AGENT.projectDir,
+      FIXTURE_LOOP_PENDING_APPROVAL.goal,
+      "2026-05-05 09:30:00",
+    ],
+  );
+
   sqlite.close();
 
   // Seed transcript JSONL so /tasks/[id] can render its Transcript card

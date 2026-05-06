@@ -125,11 +125,9 @@ describe("buildScheduleAddRequest", () => {
     expect(headers["content-type"]).toBe("application/json");
     expect(headers[CSRF_HEADER]).toBe("csrf-tok-xyz");
     expect(JSON.parse(init.body as string)).toEqual({
-      json: {
-        agentName: "alpha",
-        prompt: "run nightly",
-        intervalMinutes: 1440,
-      },
+      agentName: "alpha",
+      prompt: "run nightly",
+      intervalMinutes: 1440,
     });
   });
 
@@ -144,8 +142,8 @@ describe("buildScheduleAddRequest", () => {
       },
       "tok",
     );
-    const body = JSON.parse(init.body as string);
-    expect(body.json).toEqual({
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body).toEqual({
       agentName: "alpha",
       prompt: "run hourly",
       intervalMinutes: 60,
@@ -153,7 +151,7 @@ describe("buildScheduleAddRequest", () => {
       cronExpr: "0 * * * *",
     });
     // channelChatId not provided → must NOT be in the envelope.
-    expect(body.json.channelChatId).toBeUndefined();
+    expect(body.channelChatId).toBeUndefined();
   });
 
   it("forwards channelChatId verbatim when supplied", () => {
@@ -166,8 +164,8 @@ describe("buildScheduleAddRequest", () => {
       },
       "tok",
     );
-    const body = JSON.parse(init.body as string);
-    expect(body.json.channelChatId).toBe("telegram-chat-12345");
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body.channelChatId).toBe("telegram-chat-12345");
   });
 });
 

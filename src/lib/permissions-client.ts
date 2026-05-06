@@ -35,7 +35,7 @@ export function buildRespondRequest(
         "content-type": "application/json",
         [CSRF_HEADER]: csrfToken,
       },
-      body: JSON.stringify({ json: input }),
+      body: JSON.stringify(input),
     },
   };
 }
