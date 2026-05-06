@@ -11,6 +11,7 @@ import { analyticsRouter } from "./analytics";
 import { auditRouter } from "./audit";
 import { loopsRouter } from "./loops";
 import { permissionsRouter } from "./permissions";
+import { schedulesRouter } from "./schedules";
 import { tasksRouter } from "./tasks";
 
 export const appRouter = router({
@@ -19,6 +20,7 @@ export const appRouter = router({
   audit: auditRouter,
   loops: loopsRouter,
   permissions: permissionsRouter,
+  schedules: schedulesRouter,
   tasks: tasksRouter,
 });
 

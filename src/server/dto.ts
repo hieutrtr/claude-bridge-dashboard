@@ -398,3 +398,40 @@ export interface AuditLogPage {
   items: AuditLogRow[];
   nextCursor: number | null;
 }
+
+// P3-T5 — wire shape returned by `schedules.list`. Curated subset of
+// the vendored `schedules` table (`src/db/schema.ts`) — column set
+// chosen to keep `/schedules` table rendering self-sufficient (cadence
+// human-readable label, last/next run, paused state, run count). The
+// `prompt` text IS on the wire — same "user navigated here" rule that
+// justifies showing `goal` on `/loops/[id]`. The list is read-only;
+// privacy precedent (no echo into audit) only applies to *audit*, not
+// to UI rendering.
+//
+// `enabled` is the daemon's column name — `paused === !enabled`. The
+// page maps to a "Paused" pill so users don't have to mentally invert.
+//
+// `createdAt` / `updatedAt` are intentionally omitted: the table has
+// `lastRunAt` for "when did this last fire" and `nextRunAt` for "when
+// will it fire next"; metadata timestamps are detail-page columns.
+export interface ScheduleListRow {
+  id: number;
+  name: string;
+  agentName: string;
+  prompt: string;
+  cronExpr: string | null;
+  intervalMinutes: number | null;
+  enabled: boolean;
+  runOnce: boolean;
+  runCount: number;
+  consecutiveErrors: number;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+  lastError: string | null;
+  channel: string | null;
+  createdAt: string | null;
+}
+
+export interface ScheduleListPage {
+  items: ScheduleListRow[];
+}
