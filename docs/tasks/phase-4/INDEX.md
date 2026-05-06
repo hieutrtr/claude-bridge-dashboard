@@ -42,8 +42,10 @@
 >    ≥ 90 across `/`, `/agents`, `/tasks`, `/loops`, `/schedules`,
 >    `/cost`, `/audit`, `/users` (T07 acceptance).
 >
-> **Status:** Iter 4/16 — T03 RBAC middleware landed (matrix grid + tRPC middleware migration);
-> iter 5 = T04 multi-user cost view.
+> **Status:** Iter 5/16 — T04 multi-user cost view landed
+> (`analytics.costByUser` query + `/cost?tab=user` leaderboard +
+> owner/member role split + `(unattributed)` opaque bucket);
+> iter 6 = T05 ⌘K command palette.
 
 ---
 

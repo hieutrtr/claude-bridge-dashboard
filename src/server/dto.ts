@@ -133,6 +133,43 @@ export interface CostSummary {
   topModels: CostSummaryModelRow[];
 }
 
+// P4-T04 — wire shape returned by `analytics.costByUser`.
+//
+// One row per (active) user that has spending in the window, plus an
+// `(unattributed)` bucket folding in tasks whose `user_id` is NULL OR
+// points at a revoked / unknown user. The bucket is opaque on purpose
+// (privacy precedent §c — leaking revocation status via cost columns
+// would be a regression). Members ONLY ever see their own row.
+//
+// `shareOfTotal` is computed server-side so the UI does not have to
+// re-divide; on a zero-cost window it is `0` for every row (never
+// NaN) — same floating-point invariant as `CostSummary.avgCostPerTask`.
+//
+// `selfRow` is populated only on the member branch so the UI can show
+// "Your spend this window" copy even when the member has not run any
+// tasks yet (zero-fill); for owners it is always `null` because the
+// distinction between "myself" and "everyone" collapses.
+//
+// `callerRole` rides on the wire so the UI does not need a second
+// `auth.me` round-trip when hydrating the leaderboard.
+export interface CostByUserRow {
+  userId: string | null;
+  email: string | null;
+  costUsd: number;
+  taskCount: number;
+  shareOfTotal: number;
+}
+
+export interface CostByUserPayload {
+  window: "24h" | "7d" | "30d";
+  since: string;
+  rows: CostByUserRow[];
+  totalCostUsd: number;
+  totalTasks: number;
+  callerRole: "owner" | "member";
+  selfRow: CostByUserRow | null;
+}
+
 // T10 — wire shape returned by `agents.memory({ name })`. Reads
 // `<CLAUDE_HOME>/projects/<projectSlug(projectDir)>/memory/MEMORY.md`
 // (untrusted markdown — same XSS sanitization as `tasks.result_summary`)

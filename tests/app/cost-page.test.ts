@@ -96,7 +96,7 @@ describe("/cost page", () => {
 
   it("renders the empty-state copy when no done tasks exist", async () => {
     const mod = await import("../../app/cost/page");
-    const tree = await mod.default();
+    const tree = await mod.default({ searchParams: Promise.resolve({}) });
     const html = renderToStaticMarkup(tree);
     expect(html).toContain("Cost");
     expect(html).toContain("Total spend");
@@ -118,7 +118,7 @@ describe("/cost page", () => {
     sqlite.close();
 
     const mod = await import("../../app/cost/page");
-    const tree = await mod.default();
+    const tree = await mod.default({ searchParams: Promise.resolve({}) });
     const html = renderToStaticMarkup(tree);
     // The empty-state branch should NOT render once we have completed tasks.
     expect(html).not.toContain("No completed tasks yet");
@@ -128,6 +128,44 @@ describe("/cost page", () => {
     // Tasks = 2
     expect(html).toContain(">2<");
     // Avg = $1.00
+    expect(html).toContain("$1.00");
+  });
+
+  it("default tab renders the By day / By user tab strip", async () => {
+    const mod = await import("../../app/cost/page");
+    const tree = await mod.default({ searchParams: Promise.resolve({}) });
+    const html = renderToStaticMarkup(tree);
+    expect(html).toContain("By day");
+    expect(html).toContain("By user");
+  });
+
+  it("?tab=user renders the empty leaderboard copy on a fresh DB (P4-T04)", async () => {
+    const mod = await import("../../app/cost/page");
+    const tree = await mod.default({
+      searchParams: Promise.resolve({ tab: "user" }),
+    });
+    const html = renderToStaticMarkup(tree);
+    expect(html).toContain("No completed tasks in this window");
+    // Tab strip should still render in the empty state.
+    expect(html).toContain("By user");
+  });
+
+  it("?tab=user surfaces the (unattributed) bucket for owners (P4-T04)", async () => {
+    const sqlite = new Database(dbPath);
+    sqlite.exec(`
+      INSERT INTO agents (name, project_dir, session_id, agent_file)
+      VALUES ('alpha', '/tmp/alpha', 's-alpha', '/tmp/alpha.md');
+      INSERT INTO tasks (session_id, prompt, status, cost_usd, user_id, completed_at)
+      VALUES ('s-alpha', 't', 'done', 1.0, NULL, datetime('now', '-1 hours'));
+    `);
+    sqlite.close();
+
+    const mod = await import("../../app/cost/page");
+    const tree = await mod.default({
+      searchParams: Promise.resolve({ tab: "user" }),
+    });
+    const html = renderToStaticMarkup(tree);
+    expect(html).toContain("(unattributed)");
     expect(html).toContain("$1.00");
   });
 });

@@ -13,8 +13,13 @@ import { and, desc, eq, gte, isNotNull, lte, sql } from "drizzle-orm";
 
 import { authedProcedure, router } from "../trpc";
 import { getDb } from "../db";
-import { agents, tasks } from "../../db/schema";
-import type { CostSummary, DailyCostPoint } from "../dto";
+import { agents, tasks, users } from "../../db/schema";
+import type {
+  CostByUserPayload,
+  CostByUserRow,
+  CostSummary,
+  DailyCostPoint,
+} from "../dto";
 
 const DailyCostInput = z.object({
   since: z.string().min(1).optional(),
@@ -23,6 +28,10 @@ const DailyCostInput = z.object({
 });
 
 const SummaryInput = z.object({
+  window: z.enum(["24h", "7d", "30d"]),
+});
+
+const CostByUserInput = z.object({
   window: z.enum(["24h", "7d", "30d"]),
 });
 
@@ -196,6 +205,148 @@ export const analyticsRouter = router({
           costUsd: Number(r.costUsd ?? 0),
           taskCount: Number(r.taskCount ?? 0),
         })),
+      };
+    }),
+
+  // P4-T04 — `analytics.costByUser`. Read-only leaderboard for the
+  // `/cost` "By user" tab. Owner branch returns one row per active
+  // user with spend in the window plus a synthetic `(unattributed)`
+  // bucket folding `tasks.user_id IS NULL` rows + tasks pointing at a
+  // revoked / unknown user. Member branch filters strictly to the
+  // caller's own user_id (zero-fills when no spend).
+  //
+  // Predicate matches `analytics.summary` so the per-user totals
+  // cross-check against `summary.totalCostUsd` for the same window —
+  // the load-bearing acceptance criterion (T04 task file).
+  costByUser: authedProcedure
+    .input(CostByUserInput)
+    .query(({ ctx, input }): CostByUserPayload => {
+      const db = getDb();
+      const caller = ctx.user;
+
+      const modifier = WINDOW_MODIFIERS[input.window];
+      const sinceExpr = sql<string>`datetime('now', ${modifier})`;
+
+      const sinceRow = db
+        .select({ since: sinceExpr })
+        .from(sql`(SELECT 1)`)
+        .all()[0];
+      const since = sinceRow?.since ?? "";
+
+      const baseFilters = [
+        eq(tasks.status, "done"),
+        isNotNull(tasks.costUsd),
+        isNotNull(tasks.completedAt),
+        gte(tasks.completedAt, sinceExpr),
+      ];
+
+      if (caller.role === "member") {
+        const ownFilters = [...baseFilters, eq(tasks.userId, caller.id)];
+        const totalsRow = db
+          .select({
+            totalCostUsd: sql<number>`coalesce(sum(${tasks.costUsd}), 0)`,
+            totalTasks: sql<number>`count(*)`,
+          })
+          .from(tasks)
+          .where(and(...ownFilters))
+          .all()[0];
+
+        const totalCostUsd = Number(totalsRow?.totalCostUsd ?? 0);
+        const totalTasks = Number(totalsRow?.totalTasks ?? 0);
+
+        // Member zero-fill: surface the caller's identity even when
+        // they have no spend in the window so the UI can render the
+        // "Your spend this window: $0.00" copy without an empty state.
+        const selfRow: CostByUserRow = {
+          userId: caller.id,
+          email: caller.email,
+          costUsd: totalCostUsd,
+          taskCount: totalTasks,
+          shareOfTotal: totalTasks > 0 ? 1 : 0,
+        };
+
+        return {
+          window: input.window,
+          since,
+          rows: totalTasks > 0 ? [selfRow] : [],
+          totalCostUsd,
+          totalTasks,
+          callerRole: "member",
+          selfRow,
+        };
+      }
+
+      // Owner branch — total + per-user breakdown.
+      const totalsRow = db
+        .select({
+          totalCostUsd: sql<number>`coalesce(sum(${tasks.costUsd}), 0)`,
+          totalTasks: sql<number>`count(*)`,
+        })
+        .from(tasks)
+        .where(and(...baseFilters))
+        .all()[0];
+      const totalCostUsd = Number(totalsRow?.totalCostUsd ?? 0);
+      const totalTasks = Number(totalsRow?.totalTasks ?? 0);
+
+      // LEFT JOIN against `users WHERE revoked_at IS NULL`. A revoked
+      // user, an unknown id, and a NULL user_id all produce a NULL
+      // join key — they collapse into a single `(unattributed)` bucket
+      // grouped on `users.id IS NULL`. Privacy: keeping these three
+      // branches indistinguishable prevents the cost view from leaking
+      // revocation status (precedent §c).
+      const grouped = db
+        .select({
+          userId: users.id,
+          email: users.email,
+          costUsd: sql<number>`coalesce(sum(${tasks.costUsd}), 0)`,
+          taskCount: sql<number>`count(*)`,
+        })
+        .from(tasks)
+        .leftJoin(
+          users,
+          and(eq(tasks.userId, users.id), sql`${users.revokedAt} IS NULL`),
+        )
+        .where(and(...baseFilters))
+        .groupBy(users.id, users.email)
+        .all();
+
+      const rows: CostByUserRow[] = grouped.map((r) => {
+        const cost = Number(r.costUsd ?? 0);
+        return {
+          userId: r.userId ?? null,
+          email: r.email ?? null,
+          costUsd: cost,
+          taskCount: Number(r.taskCount ?? 0),
+          shareOfTotal: totalCostUsd > 0 ? cost / totalCostUsd : 0,
+        };
+      });
+
+      // Sort: costUsd DESC, then email ASC (NULLS LAST so the
+      // unattributed bucket drops to the bottom on ties), then userId
+      // ASC for total determinism across runs.
+      rows.sort((a, b) => {
+        if (b.costUsd !== a.costUsd) return b.costUsd - a.costUsd;
+        if (a.email === null && b.email !== null) return 1;
+        if (a.email !== null && b.email === null) return -1;
+        if (a.email !== null && b.email !== null) {
+          if (a.email < b.email) return -1;
+          if (a.email > b.email) return 1;
+        }
+        const ai = a.userId ?? "";
+        const bi = b.userId ?? "";
+        if (ai < bi) return -1;
+        if (ai > bi) return 1;
+        return 0;
+      });
+
+      return {
+        window: input.window,
+        since,
+        rows,
+        totalCostUsd,
+        totalTasks,
+        callerRole: "owner",
+        selfRow: null,
       };
     }),
 });

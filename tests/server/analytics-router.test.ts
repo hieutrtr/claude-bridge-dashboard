@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { appRouter } from "../../src/server/routers/_app";
-import { resetDb } from "../../src/server/db";
+import { getSqlite, resetDb } from "../../src/server/db";
+
+// `ENV_OWNER_USER_ID` literal — kept inline to avoid pulling in the auth
+// module (which adds a JWT_SECRET requirement to this test file).
+const ENV_OWNER_USER_ID = "owner";
 
 let tmpDir: string;
 let dbPath: string;
@@ -71,6 +75,17 @@ interface TaskSeed {
   model?: string | null;
   completedAt?: string | null;
   createdAt?: string | null;
+  userId?: string | null;
+}
+
+// P4-T04 — `users` row seed for the costByUser tests. The migration
+// runner (`runMigrations`) creates the table on first `getDb()` access,
+// so the test seeds against the same handle without DDL of its own.
+interface UserSeed {
+  id: string;
+  email: string;
+  role?: "owner" | "member";
+  revokedAt?: number | null;
 }
 
 function seedAgents(db: Database, rows: AgentSeed[]): void {
@@ -87,8 +102,8 @@ function seedTasks(db: Database, rows: TaskSeed[]): void {
   const stmt = db.prepare(`
     INSERT INTO tasks
       (session_id, prompt, status, cost_usd, channel, model,
-       created_at, completed_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       created_at, completed_at, user_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   for (const r of rows) {
     stmt.run(
@@ -100,6 +115,28 @@ function seedTasks(db: Database, rows: TaskSeed[]): void {
       r.model ?? null,
       r.createdAt ?? r.completedAt ?? "2026-05-05 09:00:00",
       r.completedAt ?? null,
+      r.userId ?? null,
+    );
+  }
+}
+
+// P4-T04 — seeds active or revoked rows in the dashboard-owned `users`
+// table created lazily by `runMigrations` on first `getDb()` access.
+// Caller MUST trigger that initialisation (any tRPC call already does)
+// before opening the raw `Database` handle for seeding, so the table
+// exists.
+function seedUsers(db: Database, rows: UserSeed[]): void {
+  const stmt = db.prepare(`
+    INSERT INTO users (id, email, role, created_at, revoked_at)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  for (const r of rows) {
+    stmt.run(
+      r.id,
+      r.email,
+      r.role ?? "member",
+      Date.now(),
+      r.revokedAt ?? null,
     );
   }
 }
@@ -454,5 +491,282 @@ describe("analytics.summary", () => {
     const empty = await caller.analytics.summary({ window: "7d" });
     expect(empty.avgCostPerTask).toBe(0);
     expect(Number.isNaN(empty.avgCostPerTask)).toBe(false);
+  });
+});
+
+describe("analytics.costByUser", () => {
+  // Cross-cutting helper: trigger migrations on the cached handle so
+  // the dashboard-owned `users` table exists before we try to seed it.
+  // First `getSqlite()` call after `resetDb()` opens the DB and runs
+  // `runMigrations` (idempotent, IF-NOT-EXISTS guarded).
+  function ensureMigrated(): Database {
+    return getSqlite();
+  }
+
+  it("owner sees [] on a fresh DB", async () => {
+    const caller = appRouter.createCaller({
+      userId: ENV_OWNER_USER_ID,
+    });
+    const result = await caller.analytics.costByUser({ window: "30d" });
+    expect(result.rows).toEqual([]);
+    expect(result.totalCostUsd).toBe(0);
+    expect(result.totalTasks).toBe(0);
+    expect(result.callerRole).toBe("owner");
+    expect(result.selfRow).toBeNull();
+    expect(result.window).toBe("30d");
+    expect(typeof result.since).toBe("string");
+  });
+
+  it("owner totals match analytics.summary for the same window", async () => {
+    const sqlite = new Database(dbPath);
+    seedAgents(sqlite, [
+      { name: "alpha", projectDir: "/tmp/alpha", sessionId: "s-alpha" },
+    ]);
+    sqlite.exec(`
+      INSERT INTO tasks (session_id, prompt, status, cost_usd, user_id, completed_at)
+      VALUES
+        ('s-alpha', 't', 'done', 1.5,  'u-1', datetime('now', '-1 hours')),
+        ('s-alpha', 't', 'done', 2.5,  'u-2', datetime('now', '-2 hours')),
+        ('s-alpha', 't', 'done', 0.25, NULL,  datetime('now', '-3 hours'));
+    `);
+    sqlite.close();
+
+    ensureMigrated();
+    const cached = getSqlite();
+    seedUsers(cached, [
+      { id: "u-1", email: "alice@example.com", role: "member" },
+      { id: "u-2", email: "bob@example.com", role: "member" },
+    ]);
+
+    const caller = appRouter.createCaller({
+      userId: ENV_OWNER_USER_ID,
+    });
+    const summary = await caller.analytics.summary({ window: "7d" });
+    const byUser = await caller.analytics.costByUser({ window: "7d" });
+
+    expect(byUser.totalCostUsd).toBeCloseTo(summary.totalCostUsd, 9);
+    expect(byUser.totalTasks).toBe(summary.totalTasks);
+    expect(byUser.totalTasks).toBe(3);
+  });
+
+  it("owner sees per-user buckets sorted by costUsd DESC", async () => {
+    const sqlite = new Database(dbPath);
+    seedAgents(sqlite, [
+      { name: "alpha", projectDir: "/tmp/alpha", sessionId: "s-alpha" },
+    ]);
+    sqlite.exec(`
+      INSERT INTO tasks (session_id, prompt, status, cost_usd, user_id, completed_at)
+      VALUES
+        ('s-alpha', 't', 'done', 4.0, 'u-bob',   datetime('now', '-1 hours')),
+        ('s-alpha', 't', 'done', 5.0, 'u-bob',   datetime('now', '-2 hours')),
+        ('s-alpha', 't', 'done', 3.0, 'u-alice', datetime('now', '-3 hours'));
+    `);
+    sqlite.close();
+
+    ensureMigrated();
+    const cached = getSqlite();
+    seedUsers(cached, [
+      { id: "u-alice", email: "alice@example.com", role: "member" },
+      { id: "u-bob", email: "bob@example.com", role: "member" },
+    ]);
+
+    const caller = appRouter.createCaller({
+      userId: ENV_OWNER_USER_ID,
+    });
+    const result = await caller.analytics.costByUser({ window: "7d" });
+    expect(result.rows.length).toBe(2);
+    expect(result.rows[0]!.userId).toBe("u-bob");
+    expect(result.rows[0]!.email).toBe("bob@example.com");
+    expect(result.rows[0]!.costUsd).toBeCloseTo(9.0, 9);
+    expect(result.rows[0]!.taskCount).toBe(2);
+    expect(result.rows[1]!.userId).toBe("u-alice");
+    expect(result.rows[1]!.costUsd).toBeCloseTo(3.0, 9);
+  });
+
+  it("owner buckets tasks.user_id IS NULL into (unattributed)", async () => {
+    const sqlite = new Database(dbPath);
+    seedAgents(sqlite, [
+      { name: "alpha", projectDir: "/tmp/alpha", sessionId: "s-alpha" },
+    ]);
+    sqlite.exec(`
+      INSERT INTO tasks (session_id, prompt, status, cost_usd, user_id, completed_at)
+      VALUES
+        ('s-alpha', 't', 'done', 2.0, 'u-alice', datetime('now', '-1 hours')),
+        ('s-alpha', 't', 'done', 0.5, NULL,      datetime('now', '-2 hours'));
+    `);
+    sqlite.close();
+
+    ensureMigrated();
+    seedUsers(getSqlite(), [
+      { id: "u-alice", email: "alice@example.com", role: "member" },
+    ]);
+
+    const caller = appRouter.createCaller({
+      userId: ENV_OWNER_USER_ID,
+    });
+    const result = await caller.analytics.costByUser({ window: "7d" });
+    expect(result.rows.length).toBe(2);
+    const unattributed = result.rows.find((r) => r.userId === null);
+    expect(unattributed).toBeDefined();
+    expect(unattributed!.email).toBeNull();
+    expect(unattributed!.costUsd).toBeCloseTo(0.5, 9);
+    expect(unattributed!.taskCount).toBe(1);
+  });
+
+  it("owner buckets unknown user_id refs into (unattributed)", async () => {
+    const sqlite = new Database(dbPath);
+    seedAgents(sqlite, [
+      { name: "alpha", projectDir: "/tmp/alpha", sessionId: "s-alpha" },
+    ]);
+    sqlite.exec(`
+      INSERT INTO tasks (session_id, prompt, status, cost_usd, user_id, completed_at)
+      VALUES
+        ('s-alpha', 't', 'done', 1.0, 'u-known',   datetime('now', '-1 hours')),
+        ('s-alpha', 't', 'done', 0.7, 'u-unknown', datetime('now', '-2 hours'));
+    `);
+    sqlite.close();
+
+    ensureMigrated();
+    seedUsers(getSqlite(), [
+      { id: "u-known", email: "known@example.com", role: "member" },
+    ]);
+
+    const caller = appRouter.createCaller({
+      userId: ENV_OWNER_USER_ID,
+    });
+    const result = await caller.analytics.costByUser({ window: "7d" });
+    const unattributed = result.rows.find((r) => r.userId === null);
+    expect(unattributed).toBeDefined();
+    expect(unattributed!.costUsd).toBeCloseTo(0.7, 9);
+    expect(unattributed!.taskCount).toBe(1);
+  });
+
+  it("owner buckets revoked users into (unattributed) (no email leak)", async () => {
+    const sqlite = new Database(dbPath);
+    seedAgents(sqlite, [
+      { name: "alpha", projectDir: "/tmp/alpha", sessionId: "s-alpha" },
+    ]);
+    sqlite.exec(`
+      INSERT INTO tasks (session_id, prompt, status, cost_usd, user_id, completed_at)
+      VALUES
+        ('s-alpha', 't', 'done', 1.0, 'u-active',  datetime('now', '-1 hours')),
+        ('s-alpha', 't', 'done', 0.4, 'u-revoked', datetime('now', '-2 hours'));
+    `);
+    sqlite.close();
+
+    ensureMigrated();
+    seedUsers(getSqlite(), [
+      { id: "u-active", email: "active@example.com", role: "member" },
+      {
+        id: "u-revoked",
+        email: "revoked@example.com",
+        role: "member",
+        revokedAt: Date.now(),
+      },
+    ]);
+
+    const caller = appRouter.createCaller({
+      userId: ENV_OWNER_USER_ID,
+    });
+    const result = await caller.analytics.costByUser({ window: "7d" });
+    expect(result.rows.length).toBe(2);
+    const emails = result.rows.map((r) => r.email);
+    expect(emails).not.toContain("revoked@example.com");
+    const unattributed = result.rows.find((r) => r.userId === null);
+    expect(unattributed!.costUsd).toBeCloseTo(0.4, 9);
+  });
+
+  it("member callers see ONLY their own row (other users invisible)", async () => {
+    const sqlite = new Database(dbPath);
+    seedAgents(sqlite, [
+      { name: "alpha", projectDir: "/tmp/alpha", sessionId: "s-alpha" },
+    ]);
+    sqlite.exec(`
+      INSERT INTO tasks (session_id, prompt, status, cost_usd, user_id, completed_at)
+      VALUES
+        ('s-alpha', 't', 'done', 5.0, 'u-other', datetime('now', '-1 hours')),
+        ('s-alpha', 't', 'done', 1.0, 'u-self',  datetime('now', '-2 hours')),
+        ('s-alpha', 't', 'done', 0.5, 'u-self',  datetime('now', '-3 hours'));
+    `);
+    sqlite.close();
+
+    ensureMigrated();
+    seedUsers(getSqlite(), [
+      { id: "u-self", email: "self@example.com", role: "member" },
+      { id: "u-other", email: "other@example.com", role: "member" },
+    ]);
+
+    const caller = appRouter.createCaller({ userId: "u-self" });
+    const result = await caller.analytics.costByUser({ window: "7d" });
+    expect(result.callerRole).toBe("member");
+    expect(result.rows.length).toBe(1);
+    expect(result.rows[0]!.userId).toBe("u-self");
+    expect(result.rows[0]!.email).toBe("self@example.com");
+    expect(result.rows[0]!.costUsd).toBeCloseTo(1.5, 9);
+    expect(result.rows[0]!.shareOfTotal).toBe(1);
+    expect(result.totalCostUsd).toBeCloseTo(1.5, 9);
+    expect(result.selfRow).toEqual(result.rows[0]!);
+  });
+
+  it("member zero-fill: empty rows but selfRow with costUsd 0", async () => {
+    ensureMigrated();
+    seedUsers(getSqlite(), [
+      { id: "u-self", email: "self@example.com", role: "member" },
+    ]);
+
+    const caller = appRouter.createCaller({ userId: "u-self" });
+    const result = await caller.analytics.costByUser({ window: "7d" });
+    expect(result.callerRole).toBe("member");
+    expect(result.rows).toEqual([]);
+    expect(result.totalCostUsd).toBe(0);
+    expect(result.totalTasks).toBe(0);
+    expect(result.selfRow).toEqual({
+      userId: "u-self",
+      email: "self@example.com",
+      costUsd: 0,
+      taskCount: 0,
+      shareOfTotal: 0,
+    });
+  });
+
+  it("shareOfTotal sums to 1 (with spend) and is 0 on empty (no NaN)", async () => {
+    const sqlite = new Database(dbPath);
+    seedAgents(sqlite, [
+      { name: "alpha", projectDir: "/tmp/alpha", sessionId: "s-alpha" },
+    ]);
+    sqlite.exec(`
+      INSERT INTO tasks (session_id, prompt, status, cost_usd, user_id, completed_at)
+      VALUES
+        ('s-alpha', 't', 'done', 3.0, 'u-a', datetime('now', '-1 hours')),
+        ('s-alpha', 't', 'done', 1.0, 'u-b', datetime('now', '-2 hours'));
+    `);
+    sqlite.close();
+
+    ensureMigrated();
+    seedUsers(getSqlite(), [
+      { id: "u-a", email: "a@example.com", role: "member" },
+      { id: "u-b", email: "b@example.com", role: "member" },
+    ]);
+
+    const caller = appRouter.createCaller({
+      userId: ENV_OWNER_USER_ID,
+    });
+    const populated = await caller.analytics.costByUser({ window: "7d" });
+    const sum = populated.rows.reduce((acc, r) => acc + r.shareOfTotal, 0);
+    expect(sum).toBeCloseTo(1.0, 9);
+
+    // Empty branch — no spend ⇒ no NaN. Re-use the existing seeded
+    // users; only the tasks table needs truncating.
+    const sqlite2 = new Database(dbPath);
+    sqlite2.exec("DELETE FROM tasks;");
+    sqlite2.close();
+    resetDb();
+
+    const empty = await caller.analytics.costByUser({ window: "7d" });
+    expect(empty.totalCostUsd).toBe(0);
+    for (const row of empty.rows) {
+      expect(row.shareOfTotal).toBe(0);
+      expect(Number.isNaN(row.shareOfTotal)).toBe(false);
+    }
   });
 });
