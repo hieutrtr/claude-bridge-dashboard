@@ -18,12 +18,13 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { and, desc, eq, gt, isNotNull } from "drizzle-orm";
 
-import { publicProcedure, router } from "../trpc";
+import { authedProcedure, router } from "../trpc";
 import { getDb } from "../db";
 import { agents, schedules, tasks } from "../../db/schema";
 import { appendAudit } from "../audit";
 import { auditFailureCode, mapMcpErrorToTrpc } from "../mcp/errors";
 import { forecastSchedule } from "../../lib/cost-forecast";
+import { requireOwnerOrSelf } from "../rbac";
 import type {
   ScheduleAddResult,
   ScheduleCostForecast,
@@ -176,6 +177,7 @@ interface ScheduleLookupRow {
   id: number;
   name: string;
   agentName: string;
+  userId: string | null;
 }
 
 function lookupSchedule(id: number): ScheduleLookupRow | null {
@@ -185,6 +187,7 @@ function lookupSchedule(id: number): ScheduleLookupRow | null {
       id: schedules.id,
       name: schedules.name,
       agentName: schedules.agentName,
+      userId: schedules.userId,
     })
     .from(schedules)
     .where(eq(schedules.id, id))
@@ -196,6 +199,7 @@ function lookupSchedule(id: number): ScheduleLookupRow | null {
     id: row.id,
     name: row.name,
     agentName: row.agentName,
+    userId: row.userId ?? null,
   };
 }
 
@@ -279,7 +283,7 @@ function lookupScheduleForRuns(id: number): ScheduleRunsLookupRow | null {
 }
 
 function makeScheduleActionProcedure(action: ScheduleAction) {
-  return publicProcedure
+  return authedProcedure
     .input(ScheduleActionInput)
     .mutation(async ({ input, ctx }): Promise<ScheduleMutationResult> => {
       if (!ctx.mcp) {
@@ -317,6 +321,15 @@ function makeScheduleActionProcedure(action: ScheduleAction) {
           message: "schedule not found",
         });
       }
+
+      // P4-T03 — own-resource carve-out. Members may only pause/
+      // resume/remove schedules they created; legacy NULL `user_id`
+      // (pre-Phase-4 CLI rows) is allowed for both roles.
+      requireOwnerOrSelf({
+        ctx,
+        route: `schedules.${action}`,
+        resourceUserId: row.userId,
+      });
 
       const failurePayload: Record<string, unknown> = {
         id: input.id,
@@ -361,7 +374,7 @@ export const schedulesRouter = router({
   // surfaces at the top — the typical "what's about to run" question
   // the user opens this page to answer. Schedules with `nextRunAt=null`
   // (paused / never-fired) drop to the bottom.
-  list: publicProcedure
+  list: authedProcedure
     .input(ListInput)
     .query(({ input }): ScheduleListPage => {
       const db = getDb();
@@ -428,7 +441,7 @@ export const schedulesRouter = router({
   // currently only stores `intervalMinutes`. When daemon-side cron
   // support lands (filed against `claude-bridge`), no audit-shape
   // change is needed.
-  add: publicProcedure
+  add: authedProcedure
     .input(AddInput)
     .mutation(async ({ input, ctx }): Promise<ScheduleAddResult> => {
       if (!ctx.mcp) {
@@ -564,7 +577,7 @@ export const schedulesRouter = router({
   //
   // Read-only — no audit row (Phase 2 audit-scope decision: queries
   // are not audited). Same shape as `loops.list` / `tasks.list`.
-  runs: publicProcedure
+  runs: authedProcedure
     .input(RunsInput)
     .query(({ input }): ScheduleRunsPage => {
       const schedule = lookupScheduleForRuns(input.id);
@@ -659,7 +672,7 @@ export const schedulesRouter = router({
   //
   // No audit, no MCP, no CSRF — read-only query (Phase 2 audit-scope
   // decision: queries are not audited).
-  costForecast: publicProcedure
+  costForecast: authedProcedure
     .input(CostForecastInput)
     .query(({ input }): ScheduleCostForecast => {
       const db = getDb();

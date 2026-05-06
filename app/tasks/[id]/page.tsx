@@ -11,6 +11,7 @@ import { notFound } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 
 import { appRouter } from "@/src/server/routers/_app";
+import { getSessionSubject } from "@/src/server/session";
 import { MARKDOWN_REHYPE_PLUGINS } from "@/src/lib/markdown";
 import type { TranscriptTurn } from "@/src/lib/transcript";
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
@@ -46,7 +47,8 @@ export default async function TaskDetailPage({ params }: PageProps) {
     notFound();
   }
 
-  const caller = appRouter.createCaller({});
+  const userId = await getSessionSubject();
+  const caller = appRouter.createCaller({ userId });
   const task = await caller.tasks.get({ id });
   if (!task) {
     notFound();

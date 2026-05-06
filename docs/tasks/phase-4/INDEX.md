@@ -42,8 +42,8 @@
 >    ≥ 90 across `/`, `/agents`, `/tasks`, `/loops`, `/schedules`,
 >    `/cost`, `/audit`, `/users` (T07 acceptance).
 >
-> **Status:** Iter 3/16 — T02 user management page landed; iter 4 = T03
-> RBAC middleware (matrix grid + tRPC middleware migration).
+> **Status:** Iter 4/16 — T03 RBAC middleware landed (matrix grid + tRPC middleware migration);
+> iter 5 = T04 multi-user cost view.
 
 ---
 

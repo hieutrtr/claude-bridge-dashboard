@@ -12,6 +12,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { appRouter } from "@/src/server/routers/_app";
+import { getSessionSubject } from "@/src/server/session";
 import { Badge } from "@/src/components/ui/badge";
 import {
   Card,
@@ -72,7 +73,8 @@ export default async function LoopDetailPage({ params }: PageProps) {
     notFound();
   }
 
-  const caller = appRouter.createCaller({});
+  const userId = await getSessionSubject();
+  const caller = appRouter.createCaller({ userId });
   const loop = await caller.loops.get({ loopId });
   if (loop === null) {
     notFound();

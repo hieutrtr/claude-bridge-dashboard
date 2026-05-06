@@ -224,7 +224,7 @@ afterEach(() => {
 
 describe("schedules.list — empty + ordering", () => {
   it("empty DB → empty page", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.schedules.list({});
     expect(out).toEqual({ items: [] });
   });
@@ -243,7 +243,7 @@ describe("schedules.list — empty + ordering", () => {
       name: "earlier",
       nextRunAt: "2026-05-06T08:00:00.000Z",
     });
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.schedules.list({});
     expect(out.items.map((r) => r.name)).toEqual([
       "earlier",
@@ -272,7 +272,7 @@ describe("schedules.list — wire shape", () => {
       channel: "telegram",
       createdAt: "2026-05-01T00:00:00.000Z",
     });
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.schedules.list({});
     expect(out.items.length).toBe(1);
     expect(out.items[0]!).toEqual({
@@ -301,7 +301,7 @@ describe("schedules.list — wire shape", () => {
       cronExpr: null,
       nextRunAt: "2026-05-06T08:30:00.000Z",
     });
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.schedules.list({});
     expect(out.items[0]!.intervalMinutes).toBe(30);
     expect(out.items[0]!.cronExpr).toBeNull();
@@ -309,7 +309,7 @@ describe("schedules.list — wire shape", () => {
 
   it("disabled row reports enabled=false", async () => {
     seedSchedule(db, { name: "paused", enabled: false });
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.schedules.list({});
     expect(out.items[0]!.enabled).toBe(false);
   });
@@ -323,7 +323,7 @@ describe("schedules.list — wire shape", () => {
       nextRunAt: null,
       lastError: null,
     });
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.schedules.list({});
     expect(out.items[0]!.cronExpr).toBeNull();
     expect(out.items[0]!.intervalMinutes).toBeNull();
@@ -341,7 +341,7 @@ describe("schedules.list — agent filter", () => {
   });
 
   it("agent filter narrows results", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.schedules.list({ agent: "alpha" });
     expect(out.items.map((r) => r.name).sort()).toEqual([
       "alpha-1",
@@ -350,7 +350,7 @@ describe("schedules.list — agent filter", () => {
   });
 
   it("unknown agent → empty page", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.schedules.list({ agent: "ghost" });
     expect(out.items).toEqual([]);
   });
@@ -358,7 +358,7 @@ describe("schedules.list — agent filter", () => {
 
 describe("schedules.list — input validation", () => {
   it("rejects empty agent string", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     let caught: TRPCError | null = null;
     try {
       await caller.schedules.list({ agent: "" });
@@ -485,20 +485,26 @@ describe("schedules.add — happy path (text envelope)", () => {
     expect(payload.channelChatId).toBeUndefined();
   });
 
-  it("omits user_id from MCP params when caller is unauthenticated", async () => {
+  it("rejects unauthenticated caller with UNAUTHORIZED + audits rbac_denied (P4-T03)", async () => {
     const { client, calls } = fakePool(async () => ({ id: 5 }));
     const caller = appRouter.createCaller({
       mcp: client,
       userId: null,
       req: makeReq({}, "schedules.add"),
     });
-    await caller.schedules.add({
-      agentName: "alpha",
-      prompt: "x",
-      intervalMinutes: 60,
-    });
-    expect((calls[0]!.params as { user_id?: string }).user_id).toBeUndefined();
-    expect(rows(db)[0]!.user_id).toBeNull();
+    await expect(
+      caller.schedules.add({
+        agentName: "alpha",
+        prompt: "x",
+        intervalMinutes: 60,
+      }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(calls.length).toBe(0);
+    const all = rows(db);
+    expect(all.length).toBe(1);
+    expect(all[0]!.action).toBe("rbac_denied");
+    expect(all[0]!.resource_type).toBe("schedules.add");
+    expect(all[0]!.user_id).toBeNull();
   });
 });
 
@@ -854,7 +860,7 @@ describe("schedules.pause / resume / remove — happy path", () => {
     });
   }
 
-  it("omits user_id from MCP params when caller is unauthenticated (resume)", async () => {
+  it("rejects unauthenticated caller with UNAUTHORIZED + audits rbac_denied (P4-T03)", async () => {
     const id = seedSchedule(db, { name: "anon", enabled: false });
     const { client, calls } = fakePool(async () => ({ ok: true }));
     const caller = appRouter.createCaller({
@@ -862,12 +868,15 @@ describe("schedules.pause / resume / remove — happy path", () => {
       userId: null,
       req: makeReq({}, "schedules.resume"),
     });
-    await caller.schedules.resume({ id });
-    // Daemon resume does not take user_id at all — params are just
-    // name_or_id. We pin the exact shape so a regression
-    // (params bleeding) is caught.
-    expect(calls[0]!.params).toEqual({ name_or_id: String(id) });
-    expect(rows(db)[0]!.user_id).toBeNull();
+    await expect(
+      caller.schedules.resume({ id }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(calls.length).toBe(0);
+    const all = rows(db);
+    expect(all.length).toBe(1);
+    expect(all[0]!.action).toBe("rbac_denied");
+    expect(all[0]!.resource_type).toBe("schedules.resume");
+    expect(all[0]!.user_id).toBeNull();
   });
 });
 
@@ -1160,7 +1169,7 @@ describe("schedules.runs — happy path", () => {
       status: "done",
     });
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.schedules.runs({ id: scheduleId });
     expect(out.scheduleId).toBe(scheduleId);
     expect(out.scheduleName).toBe("nightly-tests");
@@ -1186,7 +1195,7 @@ describe("schedules.runs — happy path", () => {
       prompt: "x",
       channel: "cli",
     });
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.schedules.runs({ id });
     expect(out.scheduleId).toBe(id);
     expect(out.scheduleName).toBe("fresh");
@@ -1201,7 +1210,7 @@ describe("schedules.runs — happy path", () => {
       prompt: "x",
       channel: "cli",
     });
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.schedules.runs({ id });
     expect(out.agentName).toBe("ghost");
     expect(out.items).toEqual([]);
@@ -1223,7 +1232,7 @@ describe("schedules.runs — happy path", () => {
         createdAt: `2026-05-0${i + 1}T00:00:00.000Z`,
       });
     }
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.schedules.runs({ id, limit: 2 });
     expect(out.items.length).toBe(2);
   });
@@ -1239,7 +1248,7 @@ describe("schedules.runs — happy path", () => {
     for (let i = 0; i < 35; i++) {
       seedTask(db, { sessionId: "sess-alpha", prompt: "p", channel: "cli" });
     }
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.schedules.runs({ id });
     expect(out.items.length).toBe(30);
   });
@@ -1252,7 +1261,7 @@ describe("schedules.runs — happy path", () => {
       prompt: "p",
       channel: "cli",
     });
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     await caller.schedules.runs({ id });
     expect(rows(db).length).toBe(0);
   });
@@ -1260,7 +1269,7 @@ describe("schedules.runs — happy path", () => {
 
 describe("schedules.runs — input validation + unknown id", () => {
   it("unknown id → NOT_FOUND", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     let caught: TRPCError | null = null;
     try {
       await caller.schedules.runs({ id: 9999 });
@@ -1271,7 +1280,7 @@ describe("schedules.runs — input validation + unknown id", () => {
   });
 
   it("rejects non-positive id", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     let caught: TRPCError | null = null;
     try {
       await caller.schedules.runs({ id: 0 });
@@ -1289,7 +1298,7 @@ describe("schedules.runs — input validation + unknown id", () => {
       prompt: "p",
       channel: "cli",
     });
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     let caught: TRPCError | null = null;
     try {
       await caller.schedules.runs({ id, limit: 101 });
@@ -1307,7 +1316,7 @@ describe("schedules.runs — input validation + unknown id", () => {
       prompt: "p",
       channel: "cli",
     });
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     let caught: TRPCError | null = null;
     try {
       await caller.schedules.runs({ id, limit: 0 });
@@ -1342,7 +1351,7 @@ describe("schedules.costForecast — happy path (interval mode)", () => {
       });
     }
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.schedules.costForecast({
       agent: "alpha",
       intervalMinutes: 60,
@@ -1362,7 +1371,7 @@ describe("schedules.costForecast — happy path (interval mode)", () => {
     seedTask(db, { sessionId: "sess-alpha", prompt: "b", costUsd: 0 });
     seedTask(db, { sessionId: "sess-alpha", prompt: "c", costUsd: 0.05 });
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.schedules.costForecast({
       agent: "alpha",
       intervalMinutes: 60,
@@ -1378,7 +1387,7 @@ describe("schedules.costForecast — happy path (interval mode)", () => {
     seedTask(db, { sessionId: "sess-alpha", prompt: "no-cost-2" });
     seedTask(db, { sessionId: "sess-alpha", prompt: "real", costUsd: 0.10 });
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.schedules.costForecast({
       agent: "alpha",
       intervalMinutes: 60,
@@ -1395,7 +1404,7 @@ describe("schedules.costForecast — happy path (interval mode)", () => {
         costUsd: 0.01,
       });
     }
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.schedules.costForecast({
       agent: "alpha",
       intervalMinutes: 60,
@@ -1423,7 +1432,7 @@ describe("schedules.costForecast — happy path (interval mode)", () => {
       });
     }
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.schedules.costForecast({
       agent: "alpha",
       intervalMinutes: 60,
@@ -1436,7 +1445,7 @@ describe("schedules.costForecast — happy path (interval mode)", () => {
 describe("schedules.costForecast — empty / unknown / unresolved cases", () => {
   it("agent with zero cost-bearing tasks → insufficientHistory + null monthly", async () => {
     seedAgent(db, { name: "alpha", sessionId: "sess-alpha" });
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.schedules.costForecast({
       agent: "alpha",
       intervalMinutes: 60,
@@ -1449,7 +1458,7 @@ describe("schedules.costForecast — empty / unknown / unresolved cases", () => 
   });
 
   it("unknown agent → empty sample pool + still computes runsPerMonth", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.schedules.costForecast({
       agent: "ghost",
       intervalMinutes: 1440,
@@ -1463,7 +1472,7 @@ describe("schedules.costForecast — empty / unknown / unresolved cases", () => 
 
 describe("schedules.costForecast — input validation", () => {
   it("rejects when neither cron nor interval supplied", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     let caught: TRPCError | null = null;
     try {
       await caller.schedules.costForecast({ agent: "alpha" });
@@ -1474,7 +1483,7 @@ describe("schedules.costForecast — input validation", () => {
   });
 
   it("rejects empty agent string", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     let caught: TRPCError | null = null;
     try {
       await caller.schedules.costForecast({
@@ -1488,7 +1497,7 @@ describe("schedules.costForecast — input validation", () => {
   });
 
   it("rejects intervalMinutes out of range", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     let caught: TRPCError | null = null;
     try {
       await caller.schedules.costForecast({
@@ -1505,7 +1514,7 @@ describe("schedules.costForecast — input validation", () => {
 describe("schedules.costForecast — no audit row, no MCP", () => {
   it("does NOT write an audit row (read-only query)", async () => {
     seedAgent(db, { name: "alpha", sessionId: "sess-alpha" });
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     await caller.schedules.costForecast({
       agent: "alpha",
       intervalMinutes: 60,
@@ -1515,7 +1524,7 @@ describe("schedules.costForecast — no audit row, no MCP", () => {
 
   it("runs without an MCP client wired (no INTERNAL_SERVER_ERROR)", async () => {
     seedAgent(db, { name: "alpha", sessionId: "sess-alpha" });
-    const caller = appRouter.createCaller({}); // no mcp on ctx
+    const caller = appRouter.createCaller({ userId: "owner" }); // no mcp on ctx
     const out = await caller.schedules.costForecast({
       agent: "alpha",
       intervalMinutes: 60,
@@ -1527,7 +1536,7 @@ describe("schedules.costForecast — no audit row, no MCP", () => {
 describe("schedules.costForecast — cron mode wire-shape sanity", () => {
   it("hourly cron expression resolves to runsPerMonth=720", async () => {
     seedAgent(db, { name: "alpha", sessionId: "sess-alpha" });
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.schedules.costForecast({
       agent: "alpha",
       cronExpr: "0 * * * *",
@@ -1539,7 +1548,7 @@ describe("schedules.costForecast — cron mode wire-shape sanity", () => {
   it("malformed cron + missing interval → cadenceUnresolved", async () => {
     seedAgent(db, { name: "alpha", sessionId: "sess-alpha" });
     seedTask(db, { sessionId: "sess-alpha", prompt: "x", costUsd: 0.05 });
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.schedules.costForecast({
       agent: "alpha",
       cronExpr: "not a cron",

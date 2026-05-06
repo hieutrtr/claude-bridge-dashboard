@@ -161,15 +161,21 @@ describe("tasks.dispatch — happy path", () => {
     expect(params.prompt).toBe(gnarly);
   });
 
-  it("writes user_id=null when caller is unauthenticated", async () => {
-    const { client } = fakePool(async () => ({ task_id: 1 }));
+  it("rejects unauthenticated caller with UNAUTHORIZED + audits rbac_denied (P4-T03)", async () => {
+    const { client, calls } = fakePool(async () => ({ task_id: 1 }));
     const caller = appRouter.createCaller({
       mcp: client,
       userId: null,
       req: makeReq(),
     });
-    await caller.tasks.dispatch({ agentName: "alpha", prompt: "anon" });
+    await expect(
+      caller.tasks.dispatch({ agentName: "alpha", prompt: "anon" }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(calls.length).toBe(0);
     const all = rows(db);
+    expect(all.length).toBe(1);
+    expect(all[0]!.action).toBe("rbac_denied");
+    expect(all[0]!.resource_type).toBe("tasks.dispatch");
     expect(all[0]!.user_id).toBeNull();
   });
 });

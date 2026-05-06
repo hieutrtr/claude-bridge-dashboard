@@ -15,6 +15,10 @@ import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { resetDb } from "../../src/server/db";
+import {
+  __clearSessionSubjectForTest,
+  __setSessionSubjectForTest,
+} from "../../src/server/session";
 
 const SCHEMA_DDL = `
   CREATE TABLE loops (
@@ -96,9 +100,11 @@ beforeEach(() => {
   process.env.BRIDGE_DB = dbPath;
   resetDb();
   db = new Database(dbPath);
+  __setSessionSubjectForTest("owner");
 });
 
 afterEach(() => {
+  __clearSessionSubjectForTest();
   db.close();
   rmSync(tmpDir, { recursive: true, force: true });
   if (ORIGINAL_BRIDGE_DB === undefined) {

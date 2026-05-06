@@ -109,7 +109,7 @@ function writeMemoryFixture(
 
 describe("agents.list (enriched)", () => {
   it("returns [] on an empty agents table", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.agents.list();
     expect(Array.isArray(result)).toBe(true);
     expect(result.length).toBe(0);
@@ -145,7 +145,7 @@ describe("agents.list (enriched)", () => {
     ]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.agents.list();
     expect(result.length).toBe(3);
     const names = result.map((a) => a.name).sort();
@@ -157,7 +157,7 @@ describe("agents.list (enriched)", () => {
     seed(sqlite, [{ name: "alpha", projectDir: "/tmp/alpha" }]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const [row] = await caller.agents.list();
     expect(row).toBeDefined();
     const keys = Object.keys(row!).sort();
@@ -193,7 +193,7 @@ describe("agents.list (enriched)", () => {
     ]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.agents.list();
     const alpha = result.find((a) => a.name === "alpha")!;
     const beta = result.find((a) => a.name === "beta")!;
@@ -224,7 +224,7 @@ describe("agents.list (enriched)", () => {
     seed(sqlite, rows);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.agents.list();
     expect(result.length).toBe(20);
     for (const row of result) {
@@ -237,7 +237,7 @@ describe("agents.list (enriched)", () => {
 
 describe("agents.get", () => {
   it("returns null on an empty agents table", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.agents.get({ name: "nonexistent" });
     expect(result).toBeNull();
   });
@@ -247,7 +247,7 @@ describe("agents.get", () => {
     seed(sqlite, [{ name: "alpha", projectDir: "/tmp/alpha" }]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.agents.get({ name: "beta" });
     expect(result).toBeNull();
   });
@@ -266,7 +266,7 @@ describe("agents.get", () => {
     ]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.agents.get({ name: "alpha" });
     expect(result).not.toBeNull();
     const keys = Object.keys(result!).sort();
@@ -304,7 +304,7 @@ describe("agents.get", () => {
     ]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.agents.get({ name: "shared" });
     expect(result).not.toBeNull();
     expect(result!.projectDir).toBe("/tmp/alpha");
@@ -312,7 +312,7 @@ describe("agents.get", () => {
   });
 
   it("rejects an empty name input", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     let threw = false;
     try {
       await caller.agents.get({ name: "" });
@@ -329,7 +329,7 @@ describe("agents.get", () => {
 // `writeMemoryFixture` to materialise on-disk state.
 describe("agents.memory", () => {
   it("returns null for an unknown agent name (no throw)", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.agents.memory({ name: "ghost" });
     expect(result).toBeNull();
   });
@@ -339,7 +339,7 @@ describe("agents.memory", () => {
     seed(sqlite, [{ name: "alpha", projectDir: "/tmp/alpha-no-mem" }]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.agents.memory({ name: "alpha" });
     expect(result).not.toBeNull();
     expect(result!.dirMissing).toBe(true);
@@ -363,7 +363,7 @@ describe("agents.memory", () => {
       { name: "feedback_tests.md", content: "# tests\nno mocks" },
     ]);
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.agents.memory({ name: "alpha" });
     expect(result).not.toBeNull();
     expect(result!.dirMissing).toBe(false);
@@ -383,7 +383,7 @@ describe("agents.memory", () => {
       { name: "user_role.md", content: "user role notes" },
     ]);
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.agents.memory({ name: "alpha" });
     expect(result).not.toBeNull();
     expect(result!.dirMissing).toBe(false);
@@ -404,7 +404,7 @@ describe("agents.memory", () => {
       { name: "MEMORY.md", content: giant },
     ]);
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.agents.memory({ name: "alpha" });
     expect(result).not.toBeNull();
     expect(result!.fileTooLarge).toBe(true);
@@ -427,7 +427,7 @@ describe("agents.memory", () => {
     mkdirSync(join(dir, "subdir"), { recursive: true });
     writeFileSync(join(dir, "subdir", "deep.md"), "should be ignored");
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.agents.memory({ name: "alpha" });
     expect(result).not.toBeNull();
     expect(result!.files).toEqual(["MEMORY.md", "notes.md"]);
@@ -443,7 +443,7 @@ describe("agents.memory", () => {
       { name: "a_first.md", content: "a" },
     ]);
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.agents.memory({ name: "alpha" });
     expect(result).not.toBeNull();
     expect(result!.files).toEqual(["MEMORY.md", "a_first.md", "z_last.md"]);
@@ -462,7 +462,7 @@ describe("agents.memory", () => {
     }
     writeMemoryFixture(tmpDir, "/tmp/alpha-cap", fixture);
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.agents.memory({ name: "alpha" });
     expect(result).not.toBeNull();
     expect(result!.files.length).toBe(200);
@@ -492,7 +492,7 @@ describe("agents.memory", () => {
       { name: "MEMORY.md", content: "alpha-mem wins" },
     ]);
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.agents.memory({ name: "shared" });
     expect(result).not.toBeNull();
     expect(result!.projectDir).toBe("/tmp/alpha-mem");
@@ -500,7 +500,7 @@ describe("agents.memory", () => {
   });
 
   it("rejects an empty name input via Zod", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     let threw = false;
     try {
       await caller.agents.memory({ name: "" });

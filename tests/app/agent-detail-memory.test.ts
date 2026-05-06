@@ -16,6 +16,10 @@ import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { resetDb } from "../../src/server/db";
+import {
+  __clearSessionSubjectForTest,
+  __setSessionSubjectForTest,
+} from "../../src/server/session";
 
 let tmpDir: string;
 let dbPath: string;
@@ -72,9 +76,11 @@ beforeEach(() => {
   process.env.BRIDGE_DB = dbPath;
   process.env.CLAUDE_HOME = tmpDir;
   resetDb();
+  __setSessionSubjectForTest("owner");
 });
 
 afterEach(() => {
+  __clearSessionSubjectForTest();
   rmSync(tmpDir, { recursive: true, force: true });
   if (ORIGINAL_BRIDGE_DB === undefined) {
     delete process.env.BRIDGE_DB;

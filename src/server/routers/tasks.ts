@@ -23,12 +23,13 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { and, desc, eq, gte, inArray, lt, lte } from "drizzle-orm";
 
-import { publicProcedure, router } from "../trpc";
+import { authedProcedure, router } from "../trpc";
 import { getDb } from "../db";
 import { agents, tasks } from "../../db/schema";
 import { appendAudit } from "../audit";
 import { McpPoolError } from "../mcp/pool";
 import { auditFailureCode, mapMcpErrorToTrpc } from "../mcp/errors";
+import { requireOwnerOrSelf } from "../rbac";
 import type {
   AgentTaskPage,
   DispatchResult,
@@ -213,7 +214,7 @@ export const tasksRouter = router({
   // the full prompt to `tasks.prompt`; the audit row is a minimal
   // index, not a duplicate (and prompts may carry operational
   // secrets).
-  dispatch: publicProcedure
+  dispatch: authedProcedure
     .input(DispatchInput)
     .mutation(async ({ input, ctx }): Promise<DispatchResult> => {
       if (!ctx.mcp) {
@@ -303,7 +304,7 @@ export const tasksRouter = router({
   //      audit row for forensics).
   //
   // Both paths audit; no path is silent.
-  kill: publicProcedure
+  kill: authedProcedure
     .input(KillInput)
     .mutation(async ({ input, ctx }): Promise<KillResult> => {
       if (!ctx.mcp) {
@@ -315,7 +316,11 @@ export const tasksRouter = router({
 
       const db = getDb();
       const row = db
-        .select({ status: tasks.status, agentName: agents.name })
+        .select({
+          status: tasks.status,
+          agentName: agents.name,
+          taskUserId: tasks.userId,
+        })
         .from(tasks)
         .leftJoin(agents, eq(tasks.sessionId, agents.sessionId))
         .where(eq(tasks.id, input.id))
@@ -331,6 +336,17 @@ export const tasksRouter = router({
           message: "task not found",
         });
       }
+
+      // P4-T03 — RBAC own-resource carve-out. Members may only kill
+      // tasks they dispatched (`tasks.user_id === caller.id`) OR
+      // legacy CLI tasks with `user_id IS NULL` (carry-forward from
+      // the pre-Phase-4 single-user world). Owners can kill any task.
+      // Throws FORBIDDEN with an audit row otherwise.
+      requireOwnerOrSelf({
+        ctx,
+        route: "tasks.kill",
+        resourceUserId: row.taskUserId ?? null,
+      });
 
       const auditBase = {
         resourceType: "task" as const,
@@ -407,7 +423,7 @@ export const tasksRouter = router({
       return { ok: true, alreadyTerminated: false };
     }),
 
-  listByAgent: publicProcedure
+  listByAgent: authedProcedure
     .input(ListByAgentInput)
     .query(({ input }): AgentTaskPage => {
       const db = getDb();
@@ -444,7 +460,7 @@ export const tasksRouter = router({
       return { items, nextCursor };
     }),
 
-  list: publicProcedure
+  list: authedProcedure
     .input(ListInput)
     .query(({ input }): GlobalTaskPage => {
       const db = getDb();
@@ -499,7 +515,7 @@ export const tasksRouter = router({
       return { items, nextCursor };
     }),
 
-  get: publicProcedure
+  get: authedProcedure
     .input(GetInput)
     .query(({ input }): TaskDetail | null => {
       const db = getDb();
@@ -536,7 +552,7 @@ export const tasksRouter = router({
   // `<CLAUDE_HOME>/projects/<slug>/<session_id>.jsonl` (slug derived
   // from `agents.project_dir`), so the user can't pivot the read to
   // an arbitrary path.
-  transcript: publicProcedure
+  transcript: authedProcedure
     .input(GetInput)
     .query(({ input }): TaskTranscript | null => {
       const db = getDb();

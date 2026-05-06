@@ -8,6 +8,7 @@
 // dispatch, no `"use client"` directive.
 
 import { appRouter } from "@/src/server/routers/_app";
+import { getSessionSubject } from "@/src/server/session";
 import { GlobalTaskTable } from "@/src/components/global-task-table";
 import { TaskFilters } from "@/src/components/task-filters";
 
@@ -57,7 +58,8 @@ export default async function TasksPage({ searchParams }: PageProps) {
   const until = readString(sp.until);
   const cursor = readCursor(sp.cursor);
 
-  const caller = appRouter.createCaller({});
+  const userId = await getSessionSubject();
+  const caller = appRouter.createCaller({ userId });
   const page = await caller.tasks.list({
     ...(status !== null ? { status } : {}),
     ...(agentName !== null ? { agentName } : {}),

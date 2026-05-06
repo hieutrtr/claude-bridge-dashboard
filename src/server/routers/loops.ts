@@ -30,12 +30,13 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { and, desc, eq, lt } from "drizzle-orm";
 
-import { publicProcedure, router } from "../trpc";
+import { authedProcedure, router } from "../trpc";
 import { getDb } from "../db";
 import { loops, loopIterations } from "../../db/schema";
 import { appendAudit } from "../audit";
 import { McpPoolError } from "../mcp/pool";
 import { auditFailureCode, mapMcpErrorToTrpc } from "../mcp/errors";
+import { requireOwnerOrSelf } from "../rbac";
 import type {
   LoopApproveResult,
   LoopCancelResult,
@@ -237,12 +238,17 @@ const LOOP_RACE_PATTERN =
 interface LoopRow {
   status: string | null;
   pendingApproval: boolean;
+  userId: string | null;
 }
 
 function lookupLoop(loopId: string): LoopRow | undefined {
   const db = getDb();
   return db
-    .select({ status: loops.status, pendingApproval: loops.pendingApproval })
+    .select({
+      status: loops.status,
+      pendingApproval: loops.pendingApproval,
+      userId: loops.userId,
+    })
     .from(loops)
     .where(eq(loops.loopId, loopId))
     .limit(1)
@@ -257,7 +263,7 @@ export const loopsRouter = router({
   // Filtering on `status="waiting_approval"` is the only synthetic
   // case: the daemon keeps `loops.status="running"` while waiting on
   // a human, so we map the sentinel to `pending_approval=true`.
-  list: publicProcedure
+  list: authedProcedure
     .input(ListInput)
     .query(({ input }): LoopListPage => {
       const db = getDb();
@@ -302,7 +308,7 @@ export const loopsRouter = router({
   // 2 scope decision). The detail page polls every 2s for live
   // updates per INDEX caveat (multiplexed `/api/stream` is filed
   // against Phase 4).
-  get: publicProcedure
+  get: authedProcedure
     .input(GetInput)
     .query(({ input }): LoopDetail | null => {
       const db = getDb();
@@ -362,7 +368,7 @@ export const loopsRouter = router({
   // writes it to `loops.goal` so the audit row stays a minimal index,
   // not a duplicate. Same rule we apply to `tasks.dispatch.prompt`
   // and `loops.reject.reason`.
-  start: publicProcedure
+  start: authedProcedure
     .input(StartInput)
     .mutation(async ({ input, ctx }): Promise<LoopStartResult> => {
       if (!ctx.mcp) {
@@ -477,7 +483,7 @@ export const loopsRouter = router({
   // P2-T06 — approve a loop sitting in `pending_approval=true`.
   // Server-confirmed (no optimistic UI). Calls daemon's
   // `bridge_loop_approve({ loop_id })` MCP tool via the T12 pool.
-  approve: publicProcedure
+  approve: authedProcedure
     .input(ApproveInput)
     .mutation(async ({ input, ctx }): Promise<LoopApproveResult> => {
       if (!ctx.mcp) {
@@ -494,6 +500,15 @@ export const loopsRouter = router({
           message: "loop not found",
         });
       }
+
+      // P4-T03 — own-resource carve-out. Members may only approve loops
+      // they started; owners may approve any. NULL `user_id` (legacy
+      // pre-Phase-4 CLI loops) → allowed for both roles.
+      requireOwnerOrSelf({
+        ctx,
+        route: "loops.approve",
+        resourceUserId: row.userId,
+      });
 
       const auditBase = {
         resourceType: "loop" as const,
@@ -565,7 +580,7 @@ export const loopsRouter = router({
   // optional `reason` is forwarded to the daemon as `feedback` but
   // **never** persisted in `audit_log.payload_json` (may carry
   // user-private rationale).
-  reject: publicProcedure
+  reject: authedProcedure
     .input(RejectInput)
     .mutation(async ({ input, ctx }): Promise<LoopRejectResult> => {
       if (!ctx.mcp) {
@@ -582,6 +597,13 @@ export const loopsRouter = router({
           message: "loop not found",
         });
       }
+
+      // P4-T03 — own-resource carve-out (see `loops.approve`).
+      requireOwnerOrSelf({
+        ctx,
+        route: "loops.reject",
+        resourceUserId: row.userId,
+      });
 
       const auditBase = {
         resourceType: "loop" as const,
@@ -670,7 +692,7 @@ export const loopsRouter = router({
   //   race    → action="loop.cancel", payload={ status, alreadyFinalized:true,
   //                                             raceDetected:true }
   //   error   → action="loop.cancel.error", payload={ status, code }
-  cancel: publicProcedure
+  cancel: authedProcedure
     .input(CancelInput)
     .mutation(async ({ input, ctx }): Promise<LoopCancelResult> => {
       if (!ctx.mcp) {
@@ -687,6 +709,14 @@ export const loopsRouter = router({
           message: "loop not found",
         });
       }
+
+      // P4-T03 — own-resource carve-out. Members may only cancel their
+      // own loops; legacy NULL `user_id` allowed for both roles.
+      requireOwnerOrSelf({
+        ctx,
+        route: "loops.cancel",
+        resourceUserId: row.userId,
+      });
 
       const auditBase = {
         resourceType: "loop" as const,

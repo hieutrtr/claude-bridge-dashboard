@@ -403,12 +403,19 @@ describe("tasks.kill — MCP error mapping", () => {
 });
 
 describe("tasks.kill — context propagation", () => {
-  it("writes user_id=null when caller is unauthenticated", async () => {
+  it("rejects unauthenticated caller with UNAUTHORIZED + audits rbac_denied (P4-T03)", async () => {
     seedTask(db, { id: 40, agentName: "alpha", status: "running" });
-    const { client } = fakePool(async () => ({ ok: true }));
+    const { client, calls } = fakePool(async () => ({ ok: true }));
     const caller = appRouter.createCaller({ mcp: client, userId: null, req: makeReq() });
-    await caller.tasks.kill({ id: 40 });
-    expect(rows(db)[0]!.user_id).toBeNull();
+    await expect(caller.tasks.kill({ id: 40 })).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+    });
+    expect(calls.length).toBe(0);
+    const all = rows(db);
+    expect(all.length).toBe(1);
+    expect(all[0]!.action).toBe("rbac_denied");
+    expect(all[0]!.resource_type).toBe("tasks.kill");
+    expect(all[0]!.user_id).toBeNull();
   });
 
   it("writes ip_hash when x-forwarded-for is present", async () => {

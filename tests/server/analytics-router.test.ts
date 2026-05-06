@@ -126,7 +126,7 @@ afterEach(() => {
 
 describe("analytics.dailyCost", () => {
   it("returns [] when no tasks exist", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.analytics.dailyCost({});
     expect(Array.isArray(result)).toBe(true);
     expect(result.length).toBe(0);
@@ -144,7 +144,7 @@ describe("analytics.dailyCost", () => {
     ]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.analytics.dailyCost({ since: "2026-04-05" });
     expect(result).toEqual([]);
   });
@@ -159,7 +159,7 @@ describe("analytics.dailyCost", () => {
     ]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.analytics.dailyCost({ since: "2026-04-05" });
     expect(result).toEqual([]);
   });
@@ -177,7 +177,7 @@ describe("analytics.dailyCost", () => {
     ]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.analytics.dailyCost({ since: "2026-05-01" });
     expect(result.length).toBe(3);
     expect(result[0]).toEqual({ day: "2026-05-03", key: null, costUsd: 0.75, taskCount: 2 });
@@ -201,7 +201,7 @@ describe("analytics.dailyCost", () => {
     `);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.analytics.dailyCost({});
     expect(result.length).toBe(1);
     expect(result[0]!.costUsd).toBe(1.0);
@@ -219,7 +219,7 @@ describe("analytics.dailyCost", () => {
     ]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.analytics.dailyCost({
       since: "2026-05-02",
       until: "2026-05-06",
@@ -243,7 +243,7 @@ describe("analytics.dailyCost", () => {
     ]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.analytics.dailyCost({
       since: "2026-05-01",
       groupBy: "agent",
@@ -268,7 +268,7 @@ describe("analytics.dailyCost", () => {
     ]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.analytics.dailyCost({
       since: "2026-05-01",
       groupBy: "channel",
@@ -290,7 +290,7 @@ describe("analytics.dailyCost", () => {
     ]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.analytics.dailyCost({
       since: "2026-05-01",
       groupBy: "model",
@@ -311,7 +311,7 @@ describe("analytics.dailyCost", () => {
     ]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const [row] = await caller.analytics.dailyCost({ since: "2026-05-01" });
     expect(row).toBeDefined();
     expect(typeof row!.costUsd).toBe("number");
@@ -322,7 +322,7 @@ describe("analytics.dailyCost", () => {
 
 describe("analytics.summary", () => {
   it("returns zeros when no tasks", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.analytics.summary({ window: "7d" });
     expect(result.totalCostUsd).toBe(0);
     expect(result.totalTasks).toBe(0);
@@ -346,7 +346,7 @@ describe("analytics.summary", () => {
     `);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.analytics.summary({ window: "24h" });
     expect(result.totalTasks).toBe(1);
     expect(result.totalCostUsd).toBeCloseTo(1.0, 9);
@@ -373,7 +373,7 @@ describe("analytics.summary", () => {
     sqlite.exec(`UPDATE tasks SET completed_at = datetime('now', '-1 hours');`);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.analytics.summary({ window: "30d" });
     expect(result.topAgents.length).toBe(5);
     const ordered = result.topAgents.map((a) => a.agentName);
@@ -392,7 +392,7 @@ describe("analytics.summary", () => {
     `);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.analytics.summary({ window: "7d" });
     expect(result.topAgents.length).toBe(1);
     expect(result.topAgents[0]!.agentName).toBeNull();
@@ -414,7 +414,7 @@ describe("analytics.summary", () => {
     `);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.analytics.summary({ window: "7d" });
     expect(result.topModels.length).toBe(3);
     expect(result.topModels[0]!.model).toBe("opus");
@@ -439,7 +439,7 @@ describe("analytics.summary", () => {
     `);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const populated = await caller.analytics.summary({ window: "7d" });
     expect(populated.totalTasks).toBe(3);
     expect(populated.totalCostUsd).toBeCloseTo(6.0, 9);

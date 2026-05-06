@@ -4,12 +4,10 @@
 // Phase 2 ships only `list`; a future Phase 4 admin task may add
 // `distinctActions` (for a filter datalist), `count`, or a CSV export.
 //
-// Owner-only enforcement note: this single-user dashboard is gated by
-// the same auth middleware that protects every other page. We do NOT
-// re-check `ctx.userId === "owner"` at the procedure level — Phase 1
-// stubbed JWT auth without a role concept. When multi-user lands
-// (Phase 4) add an authz middleware here that throws FORBIDDEN for
-// non-owners. Documented in PHASE-2-COMPLETE.md.
+// Owner-only enforcement (P4-T03): the procedure uses `ownerProcedure`
+// which runs `requireOwner` from `src/server/rbac.ts` — UNAUTHORIZED
+// for anonymous, FORBIDDEN for member. The deferral note from Phase 2
+// is now resolved.
 //
 // Cursor + ordering — keyset on `id` (`id < ?`) ordered by
 // `(created_at DESC, id DESC)`. The `id` tiebreak is load-bearing:
@@ -27,7 +25,7 @@
 import { z } from "zod";
 import { and, desc, eq, gte, isNull, lt, lte } from "drizzle-orm";
 
-import { publicProcedure, router } from "../trpc";
+import { ownerProcedure, router } from "../trpc";
 import { getDb } from "../db";
 import { auditLog } from "../../db/schema";
 import type { AuditLogPage, AuditLogRow } from "../dto";
@@ -68,7 +66,7 @@ function tryParse(json: string | null): unknown | null {
 }
 
 export const auditRouter = router({
-  list: publicProcedure
+  list: ownerProcedure
     .input(ListInput)
     .query(({ input }): AuditLogPage => {
       const db = getDb();

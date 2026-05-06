@@ -209,7 +209,7 @@ function writeTranscriptFixture(
 
 describe("tasks.listByAgent", () => {
   it("returns empty page for an unknown agent", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.tasks.listByAgent({ agentName: "ghost" });
     expect(result.items).toEqual([]);
     expect(result.nextCursor).toBeNull();
@@ -222,7 +222,7 @@ describe("tasks.listByAgent", () => {
     ]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.tasks.listByAgent({ agentName: "alpha" });
     expect(result.items).toEqual([]);
     expect(result.nextCursor).toBeNull();
@@ -240,7 +240,7 @@ describe("tasks.listByAgent", () => {
     ]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.tasks.listByAgent({ agentName: "alpha" });
     expect(result.items.map((t) => t.prompt)).toEqual(["third", "second", "first"]);
     const ids = result.items.map((t) => t.id);
@@ -263,7 +263,7 @@ describe("tasks.listByAgent", () => {
     );
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.tasks.listByAgent({ agentName: "alpha" });
     expect(result.items.length).toBe(50);
     const lowestId = result.items[result.items.length - 1]!.id;
@@ -284,7 +284,7 @@ describe("tasks.listByAgent", () => {
     );
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.tasks.listByAgent({
       agentName: "alpha",
       limit: 50,
@@ -307,7 +307,7 @@ describe("tasks.listByAgent", () => {
     );
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const page1 = await caller.tasks.listByAgent({
       agentName: "alpha",
       limit: 3,
@@ -332,7 +332,7 @@ describe("tasks.listByAgent", () => {
   });
 
   it("rejects limit > 100 and limit < 1", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     let oversize = false;
     try {
       await caller.tasks.listByAgent({ agentName: "alpha", limit: 101 });
@@ -364,7 +364,7 @@ describe("tasks.listByAgent", () => {
     ]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const alphaPage = await caller.tasks.listByAgent({ agentName: "alpha" });
     expect(alphaPage.items.map((t) => t.prompt).sort()).toEqual([
       "alpha-1",
@@ -396,7 +396,7 @@ describe("tasks.listByAgent", () => {
     ]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const { items } = await caller.tasks.listByAgent({ agentName: "alpha" });
     expect(items.length).toBe(1);
     const keys = Object.keys(items[0]!).sort();
@@ -435,7 +435,7 @@ describe("tasks.listByAgent", () => {
     ]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const { items } = await caller.tasks.listByAgent({ agentName: "shared" });
     expect(items.map((t) => t.prompt).sort()).toEqual(["from-a", "from-b"]);
   });
@@ -443,7 +443,7 @@ describe("tasks.listByAgent", () => {
 
 describe("tasks.list (global)", () => {
   it("returns empty page when DB has no tasks", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.tasks.list({});
     expect(result.items).toEqual([]);
     expect(result.nextCursor).toBeNull();
@@ -462,7 +462,7 @@ describe("tasks.list (global)", () => {
     ]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const { items } = await caller.tasks.list({});
     expect(items.length).toBe(3);
     // Most recent first.
@@ -487,7 +487,7 @@ describe("tasks.list (global)", () => {
     ]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const { items } = await caller.tasks.list({ status: "running" });
     expect(items.map((t) => t.prompt).sort()).toEqual(["p1", "p3"]);
   });
@@ -504,7 +504,7 @@ describe("tasks.list (global)", () => {
     ]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const { items } = await caller.tasks.list({ channel: "telegram" });
     expect(items.map((t) => t.prompt).sort()).toEqual(["p2", "p3"]);
   });
@@ -522,7 +522,7 @@ describe("tasks.list (global)", () => {
     ]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const { items } = await caller.tasks.list({ agentName: "alpha" });
     expect(items.map((t) => t.prompt).sort()).toEqual(["a-1", "a-2"]);
     for (const t of items) {
@@ -538,7 +538,7 @@ describe("tasks.list (global)", () => {
     seedTasks(sqlite, [{ sessionId: "alpha-s", prompt: "p1" }]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.tasks.list({ agentName: "ghost" });
     expect(result.items).toEqual([]);
     expect(result.nextCursor).toBeNull();
@@ -556,7 +556,7 @@ describe("tasks.list (global)", () => {
     ]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const { items } = await caller.tasks.list({ since: "2026-03-01 00:00:00" });
     expect(items.map((t) => t.prompt).sort()).toEqual(["mid", "new"]);
   });
@@ -573,7 +573,7 @@ describe("tasks.list (global)", () => {
     ]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const { items } = await caller.tasks.list({ until: "2026-03-31 23:59:59" });
     expect(items.map((t) => t.prompt).sort()).toEqual(["mid", "old"]);
   });
@@ -615,7 +615,7 @@ describe("tasks.list (global)", () => {
     ]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const { items } = await caller.tasks.list({
       status: "done",
       channel: "telegram",
@@ -639,7 +639,7 @@ describe("tasks.list (global)", () => {
     );
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const { items, nextCursor } = await caller.tasks.list({});
     expect(items.length).toBe(50);
     expect(nextCursor).toBe(items[items.length - 1]!.id);
@@ -659,7 +659,7 @@ describe("tasks.list (global)", () => {
     );
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const { items, nextCursor } = await caller.tasks.list({});
     expect(items.length).toBe(5);
     expect(nextCursor).toBeNull();
@@ -679,7 +679,7 @@ describe("tasks.list (global)", () => {
     );
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const page1 = await caller.tasks.list({ limit: 3 });
     expect(page1.items.length).toBe(3);
     expect(page1.nextCursor).toBe(page1.items[2]!.id);
@@ -696,7 +696,7 @@ describe("tasks.list (global)", () => {
   });
 
   it("rejects limit > 100 and limit < 1", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     let oversize = false;
     try {
       await caller.tasks.list({ limit: 101 });
@@ -733,7 +733,7 @@ describe("tasks.list (global)", () => {
     ]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const { items } = await caller.tasks.list({});
     expect(items.length).toBe(1);
     const keys = Object.keys(items[0]!).sort();
@@ -759,7 +759,7 @@ describe("tasks.list (global)", () => {
     ]);
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const { items } = await caller.tasks.list({});
     expect(items.length).toBe(1);
     expect(items[0]!.prompt).toBe("orphan");
@@ -769,7 +769,7 @@ describe("tasks.list (global)", () => {
 
 describe("tasks.get", () => {
   it("returns null for an unknown id (no throw)", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.tasks.get({ id: 999_999 });
     expect(result).toBeNull();
   });
@@ -805,7 +805,7 @@ describe("tasks.get", () => {
     });
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const detail = await caller.tasks.get({ id });
     expect(detail).not.toBeNull();
     if (!detail) return;
@@ -875,7 +875,7 @@ describe("tasks.get", () => {
     });
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const detail = await caller.tasks.get({ id });
     expect(detail?.agentName).toBe("alpha");
   });
@@ -888,7 +888,7 @@ describe("tasks.get", () => {
     });
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const detail = await caller.tasks.get({ id });
     expect(detail).not.toBeNull();
     expect(detail!.agentName).toBeNull();
@@ -906,7 +906,7 @@ describe("tasks.get", () => {
     });
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const detail = await caller.tasks.get({ id });
     expect(detail!.resultMarkdown).toBe("# Hello\n\nWorld.");
     expect(detail!.resultMarkdownTruncated).toBe(false);
@@ -924,7 +924,7 @@ describe("tasks.get", () => {
     });
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const detail = await caller.tasks.get({ id });
     expect(detail!.resultMarkdown).toBeNull();
     expect(detail!.resultMarkdownTruncated).toBe(false);
@@ -943,7 +943,7 @@ describe("tasks.get", () => {
     });
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const detail = await caller.tasks.get({ id });
     expect(detail!.resultMarkdownTruncated).toBe(true);
     expect(detail!.resultMarkdown).not.toBeNull();
@@ -964,14 +964,14 @@ describe("tasks.get", () => {
     });
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const detail = await caller.tasks.get({ id });
     expect(detail!.resultMarkdownTruncated).toBe(false);
     expect(detail!.resultMarkdown!.length).toBe(500_000);
   });
 
   it("Zod input rejects 0, negative, fractional, and missing ids", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
 
     let zero = false;
     try {
@@ -1010,7 +1010,7 @@ describe("tasks.get", () => {
 
 describe("tasks.transcript", () => {
   it("returns null for an unknown task id (no throw)", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.tasks.transcript({ id: 999_999 });
     expect(result).toBeNull();
   });
@@ -1026,7 +1026,7 @@ describe("tasks.transcript", () => {
     });
     sqlite.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.tasks.transcript({ id });
     expect(result).not.toBeNull();
     if (!result) return;
@@ -1070,7 +1070,7 @@ describe("tasks.transcript", () => {
       }),
     ]);
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.tasks.transcript({ id });
     expect(result).not.toBeNull();
     if (!result) return;
@@ -1099,7 +1099,7 @@ describe("tasks.transcript", () => {
     const big = "x".repeat(6 * 1024 * 1024);
     writeTranscriptFixture(tmpDir, "/tmp/alpha-proj", "session-C", [big]);
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.tasks.transcript({ id });
     expect(result).not.toBeNull();
     if (!result) return;
@@ -1128,7 +1128,7 @@ describe("tasks.transcript", () => {
     );
     writeTranscriptFixture(tmpDir, "/tmp/alpha-proj", "session-D", fixtureLines);
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.tasks.transcript({ id });
     expect(result).not.toBeNull();
     if (!result) return;
@@ -1173,7 +1173,7 @@ describe("tasks.transcript", () => {
       }),
     ]);
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const result = await caller.tasks.transcript({ id });
     expect(result).not.toBeNull();
     if (!result) return;
@@ -1187,7 +1187,7 @@ describe("tasks.transcript", () => {
   });
 
   it("Zod input rejects 0 / negative / fractional / missing ids", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
 
     let zero = false;
     try {

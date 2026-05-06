@@ -8,6 +8,7 @@
 // controls (P3-T7) plug into this page in later iterations.
 
 import { appRouter } from "@/src/server/routers/_app";
+import { getSessionSubject } from "@/src/server/session";
 import { ScheduleFilters } from "@/src/components/schedule-filters";
 import { ScheduleTable } from "@/src/components/schedule-table";
 import {
@@ -33,7 +34,8 @@ export default async function SchedulesPage({ searchParams }: PageProps) {
   const sp = await searchParams;
   const agent = readString(sp.agent);
 
-  const caller = appRouter.createCaller({});
+  const userId = await getSessionSubject();
+  const caller = appRouter.createCaller({ userId });
   const page = await caller.schedules.list({
     ...(agent !== null ? { agent } : {}),
   });

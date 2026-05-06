@@ -8,15 +8,15 @@
 //   users.changeRole({ id, role })    — Mutation.owner-only. Cannot demote
 //                                       the last remaining owner (incl. self).
 //
-// RBAC: T03 generalises `requireRole(ctx, "owner")` into a tRPC
-// middleware. T02 ships an INLINE guard at the top of every procedure
-// so the page lands one iteration before the matrix migrator. The
-// guard reads `resolveSessionUser(ctx.userId)` and throws
-// `UNAUTHORIZED` for unauthenticated callers and `FORBIDDEN` for
-// non-owners. Audits the denial as `rbac_denied` (action), with the
-// requested route as `resource_type` — matches the row T03 will
-// generate from its centralised middleware. Forensics work whichever
-// implementation lands.
+// RBAC (P4-T03): every procedure uses `ownerProcedure` from `../trpc`,
+// which runs `requireOwner(ctx, path)` from `src/server/rbac.ts`. The
+// middleware throws `UNAUTHORIZED` for unauthenticated callers and
+// `FORBIDDEN` for non-owners, audits a `rbac_denied` row with the
+// requested route as `resource_type`, and exposes the resolved owner
+// `UserRow` on `ctx.user` for the procedure body's "cannot revoke
+// yourself" / "cannot demote last owner" checks. The audit shape was
+// frozen against T02's prior inline guard so existing forensics keep
+// working unchanged.
 //
 // Privacy — every audit payload encodes `targetEmailHash` (never the
 // plaintext email). The list query does NOT audit (consistent with
@@ -36,14 +36,12 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
-import { publicProcedure, router } from "../trpc";
+import { ownerProcedure, router } from "../trpc";
 import { getSqlite } from "../db";
 import { appendAudit } from "../audit";
 import {
-  envOwnerUser,
   findOrCreateUser,
   findUserById,
-  resolveSessionUser,
   type UserRow,
 } from "../auth-users";
 import {
@@ -51,7 +49,6 @@ import {
   normalizeEmail,
   resolveAuditSalt,
 } from "@/src/lib/email-hash";
-import { ENV_OWNER_USER_ID } from "@/src/lib/auth";
 
 export interface UserListRow {
   id: string;
@@ -104,79 +101,6 @@ function targetMeta(target: UserRow): AuditTargetMeta {
 function callerEmailHash(caller: UserRow): string {
   const salt = resolveAuditSalt();
   return salt ? makeEmailHash(caller.email, salt) : "no-salt";
-}
-
-interface RbacOk {
-  user: UserRow;
-}
-
-/**
- * Owner-only entrance guard. Returns the resolved owner row on success
- * so the procedure can run "cannot revoke yourself" / "cannot demote
- * last owner" checks against the caller's id without a second DB read.
- *
- * Audits `rbac_denied` for both the unauthenticated and the wrong-role
- * outcomes. Resource_type uses the requested route (e.g.
- * `users.revoke`) so the audit viewer can pivot on it.
- */
-function requireOwner(
-  ctx: { userId?: string | null; req?: Request },
-  route: string,
-): RbacOk {
-  const sub = ctx.userId ?? null;
-  if (!sub) {
-    appendAudit({
-      action: "rbac_denied",
-      resourceType: route,
-      userId: null,
-      payload: { requiredRole: "owner", callerRole: "anonymous" },
-      req: ctx.req,
-    });
-    throw new TRPCError({
-      code: "UNAUTHORIZED",
-      message: "authentication required",
-    });
-  }
-
-  let resolved: UserRow | null = null;
-  try {
-    resolved = resolveSessionUser(sub);
-  } catch {
-    // Database unreachable in the test/dev seam — fall back to the
-    // synthetic env-owner identity for the literal "owner" sub so
-    // dev workflows keep flowing.
-    if (sub === ENV_OWNER_USER_ID) resolved = envOwnerUser();
-  }
-  if (!resolved && sub === ENV_OWNER_USER_ID) {
-    resolved = envOwnerUser();
-  }
-  if (!resolved) {
-    appendAudit({
-      action: "rbac_denied",
-      resourceType: route,
-      userId: sub,
-      payload: { requiredRole: "owner", callerRole: "unknown" },
-      req: ctx.req,
-    });
-    throw new TRPCError({
-      code: "UNAUTHORIZED",
-      message: "session does not match a known user",
-    });
-  }
-  if (resolved.role !== "owner") {
-    appendAudit({
-      action: "rbac_denied",
-      resourceType: route,
-      userId: resolved.id,
-      payload: { requiredRole: "owner", callerRole: resolved.role },
-      req: ctx.req,
-    });
-    throw new TRPCError({
-      code: "FORBIDDEN",
-      message: "owner role required",
-    });
-  }
-  return { user: resolved };
 }
 
 interface RawListRow {
@@ -242,8 +166,7 @@ function setRole(id: string, role: "owner" | "member"): void {
 export const usersRouter = router({
   // P4-T02 — `users.list`. Owner-only. Returns active (non-revoked)
   // users sorted with owners first, then most-recently-active members.
-  list: publicProcedure.query(({ ctx }): UserListRow[] => {
-    requireOwner(ctx, "users.list");
+  list: ownerProcedure.query((): UserListRow[] => {
     return listActiveUsers();
   }),
 
@@ -253,10 +176,10 @@ export const usersRouter = router({
   // row is re-activated and returns `reactivated: true`.
   //
   // Privacy: audit payload encodes `targetEmailHash` only.
-  invite: publicProcedure
+  invite: ownerProcedure
     .input(InviteInput)
     .mutation(({ ctx, input }): UserMutationResult => {
-      const { user: caller } = requireOwner(ctx, "users.invite");
+      const caller = ctx.user;
 
       const email = normalizeEmail(input.email);
       const auditBase = {
@@ -353,10 +276,10 @@ export const usersRouter = router({
   // setting `revoked_at`. Cannot revoke self (would lock you out).
   // `users.list` filters revoked rows; the magic-link consume route
   // refuses revoked users (T01).
-  revoke: publicProcedure
+  revoke: ownerProcedure
     .input(RevokeInput)
     .mutation(({ ctx, input }): UserMutationResult => {
-      const { user: caller } = requireOwner(ctx, "users.revoke");
+      const caller = ctx.user;
 
       if (input.id === caller.id) {
         appendAudit({
@@ -431,10 +354,10 @@ export const usersRouter = router({
   // permanently locked out of owner-only operations otherwise. The
   // last-owner check counts active rows and is taken under the same
   // `db` handle so a concurrent revoke can't race the count to zero.
-  changeRole: publicProcedure
+  changeRole: ownerProcedure
     .input(ChangeRoleInput)
     .mutation(({ ctx, input }): UserMutationResult => {
-      const { user: caller } = requireOwner(ctx, "users.changeRole");
+      const caller = ctx.user;
 
       const target = findUserById(input.id);
       if (!target) {

@@ -11,7 +11,7 @@
 import { z } from "zod";
 import { and, desc, eq, gte, isNotNull, lte, sql } from "drizzle-orm";
 
-import { publicProcedure, router } from "../trpc";
+import { authedProcedure, router } from "../trpc";
 import { getDb } from "../db";
 import { agents, tasks } from "../../db/schema";
 import type { CostSummary, DailyCostPoint } from "../dto";
@@ -45,7 +45,7 @@ function groupKeyExpr(groupBy: "agent" | "channel" | "model" | undefined) {
 }
 
 export const analyticsRouter = router({
-  dailyCost: publicProcedure
+  dailyCost: authedProcedure
     .input(DailyCostInput)
     .query(({ input }): DailyCostPoint[] => {
       const db = getDb();
@@ -117,7 +117,7 @@ export const analyticsRouter = router({
       }));
     }),
 
-  summary: publicProcedure
+  summary: authedProcedure
     .input(SummaryInput)
     .query(({ input }): CostSummary => {
       const db = getDb();

@@ -26,7 +26,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 
-import { publicProcedure, router } from "../trpc";
+import { authedProcedure, router } from "../trpc";
 import { getDb, getSqlite } from "../db";
 import { permissions } from "../../db/schema";
 import { appendAudit } from "../audit";
@@ -82,7 +82,7 @@ export const permissionsRouter = router({
   // P2-T09 — respond to a daemon-issued permission request. The Allow
   // / Deny buttons in the dashboard toast call this; CSRF + rate-limit
   // guards run at the route handler.
-  respond: publicProcedure
+  respond: authedProcedure
     .input(RespondInput)
     .mutation(async ({ input, ctx }): Promise<PermissionRespondResult> => {
       const row = lookupPermission(input.id);

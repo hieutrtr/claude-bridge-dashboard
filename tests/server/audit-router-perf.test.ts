@@ -90,7 +90,7 @@ function median(values: number[]): number {
 
 (SKIP ? describe.skip : describe)("audit.list — perf smoke (5 000 rows)", () => {
   it("default list completes within budget", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const samples: number[] = [];
     for (let i = 0; i < ITERATIONS; i++) {
       const t = performance.now();
@@ -102,7 +102,7 @@ function median(values: number[]): number {
   });
 
   it("filtered by action completes within budget", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const samples: number[] = [];
     for (let i = 0; i < ITERATIONS; i++) {
       const t = performance.now();
@@ -117,7 +117,7 @@ function median(values: number[]): number {
   });
 
   it("filtered by since completes within budget", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const samples: number[] = [];
     for (let i = 0; i < ITERATIONS; i++) {
       const t = performance.now();

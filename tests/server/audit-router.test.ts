@@ -87,7 +87,7 @@ function openSeededDb(): Database {
 
 describe("audit.list — empty + ordering", () => {
   it("returns empty page on a fresh DB", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const r = await caller.audit.list({});
     expect(r.items).toEqual([]);
     expect(r.nextCursor).toBeNull();
@@ -102,7 +102,7 @@ describe("audit.list — empty + ordering", () => {
     ]);
     db.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const r = await caller.audit.list({});
     expect(r.items.map((x) => x.action)).toEqual([
       "task.kill",
@@ -126,7 +126,7 @@ describe("audit.list — pagination", () => {
     seed(db, rows);
     db.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const page1 = await caller.audit.list({});
     expect(page1.items.length).toBe(100);
     expect(page1.nextCursor).not.toBeNull();
@@ -151,14 +151,14 @@ describe("audit.list — pagination", () => {
     ]);
     db.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const r = await caller.audit.list({ limit: 2 });
     expect(r.items.length).toBe(2);
     expect(r.nextCursor).not.toBeNull();
   });
 
   it("rejects limit > 200 as BAD_REQUEST", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     let threw = false;
     try {
       await caller.audit.list({ limit: 500 });
@@ -179,7 +179,7 @@ describe("audit.list — pagination", () => {
     ]);
     db.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const page1 = await caller.audit.list({ limit: 2 });
     expect(page1.items.length).toBe(2);
     expect(page1.nextCursor).not.toBeNull();
@@ -211,7 +211,7 @@ describe("audit.list — filters", () => {
     ]);
     db.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const r = await caller.audit.list({ action: "task.dispatch" });
     expect(r.items.length).toBe(2);
     expect(r.items.every((x) => x.action === "task.dispatch")).toBe(true);
@@ -226,7 +226,7 @@ describe("audit.list — filters", () => {
     ]);
     db.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const r = await caller.audit.list({ resourceType: "loop" });
     expect(r.items.length).toBe(1);
     expect(r.items[0]!.action).toBe("loop.approve");
@@ -256,7 +256,7 @@ describe("audit.list — filters", () => {
     ]);
     db.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const r = await caller.audit.list({ userId: "owner" });
     expect(r.items.length).toBe(1);
     expect(r.items[0]!.userId).toBe("owner");
@@ -286,7 +286,7 @@ describe("audit.list — filters", () => {
     ]);
     db.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const r = await caller.audit.list({ userId: "<anonymous>" });
     expect(r.items.length).toBe(2);
     expect(r.items.every((x) => x.userId === null)).toBe(true);
@@ -303,7 +303,7 @@ describe("audit.list — filters", () => {
     ]);
     db.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const r = await caller.audit.list({ since: 3, until: 4 });
     expect(r.items.map((x) => x.action).sort()).toEqual(["c", "d"]);
   });
@@ -318,7 +318,7 @@ describe("audit.list — filters", () => {
     ]);
     db.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const r = await caller.audit.list({
       action: "csrf_invalid",
       since: 15,
@@ -343,7 +343,7 @@ describe("audit.list — payload parsing", () => {
     ]);
     db.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const r = await caller.audit.list({});
     expect(r.items.length).toBe(1);
     expect(r.items[0]!.payload).toEqual({ agentName: "x", model: "opus" });
@@ -364,7 +364,7 @@ describe("audit.list — payload parsing", () => {
     ]);
     db.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const r = await caller.audit.list({});
     expect(r.items[0]!.payload).toBeNull();
     expect(r.items[0]!.payloadJson).toBe("{not json");
@@ -382,7 +382,7 @@ describe("audit.list — payload parsing", () => {
     ]);
     db.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const r = await caller.audit.list({});
     expect(r.items[0]!.payload).toBeNull();
     expect(r.items[0]!.payloadJson).toBeNull();
@@ -407,7 +407,7 @@ describe("audit.list — DTO shape", () => {
     ]);
     db.close();
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const r = await caller.audit.list({});
     const row = r.items[0]!;
     expect(row.id).toBeGreaterThan(0);

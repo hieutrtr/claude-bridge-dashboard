@@ -8,6 +8,7 @@
 // procedure-level role checks are deferred to Phase 4 multi-user work.
 
 import { appRouter } from "@/src/server/routers/_app";
+import { getSessionSubject } from "@/src/server/session";
 import { AuditFilters } from "@/src/components/audit-filters";
 import { AuditLogTable } from "@/src/components/audit-log-table";
 
@@ -66,7 +67,8 @@ export default async function AuditPage({ searchParams }: PageProps) {
   const until = readMsEpoch(sp.until);
   const cursor = readCursor(sp.cursor);
 
-  const caller = appRouter.createCaller({});
+  const callerSubject = await getSessionSubject();
+  const caller = appRouter.createCaller({ userId: callerSubject });
   const page = await caller.audit.list({
     ...(action !== null ? { action } : {}),
     ...(resourceType !== null ? { resourceType } : {}),

@@ -418,12 +418,19 @@ describe("loops.approve — MCP error mapping", () => {
 });
 
 describe("loops.approve — context propagation", () => {
-  it("writes user_id=null when caller is unauthenticated", async () => {
+  it("rejects unauthenticated caller with UNAUTHORIZED + audits rbac_denied (P4-T03)", async () => {
     seedLoop(db, { loopId: "loop-anon", pendingApproval: true });
-    const { client } = fakePool(async () => ({ ok: true }));
+    const { client, calls } = fakePool(async () => ({ ok: true }));
     const caller = appRouter.createCaller({ mcp: client, userId: null, req: makeReq() });
-    await caller.loops.approve({ loopId: "loop-anon" });
-    expect(rows(db)[0]!.user_id).toBeNull();
+    await expect(
+      caller.loops.approve({ loopId: "loop-anon" }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(calls.length).toBe(0);
+    const all = rows(db);
+    expect(all.length).toBe(1);
+    expect(all[0]!.action).toBe("rbac_denied");
+    expect(all[0]!.resource_type).toBe("loops.approve");
+    expect(all[0]!.user_id).toBeNull();
   });
 });
 
@@ -746,7 +753,7 @@ function seedListLoop(db: Database, opts: SeedListLoopOpts): void {
 
 describe("loops.list — empty + ordering", () => {
   it("empty DB → empty page, null cursor", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.loops.list({});
     expect(out).toEqual({ items: [], nextCursor: null });
   });
@@ -765,7 +772,7 @@ describe("loops.list — empty + ordering", () => {
       loopId: "loop-new",
       startedAt: "2026-05-06T08:00:00.000Z",
     });
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.loops.list({});
     expect(out.items.map((r) => r.loopId)).toEqual([
       "loop-new",
@@ -792,7 +799,7 @@ describe("loops.list — wire shape", () => {
       finishReason: null,
       goal: "SECRET_GOAL_TEXT_DO_NOT_LEAK",
     });
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.loops.list({});
     expect(out.items.length).toBe(1);
     const row = out.items[0]!;
@@ -821,7 +828,7 @@ describe("loops.list — wire shape", () => {
       finishedAt: null,
       finishReason: null,
     });
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.loops.list({});
     expect(out.items[0]!.maxCostUsd).toBeNull();
     expect(out.items[0]!.finishedAt).toBeNull();
@@ -862,7 +869,7 @@ describe("loops.list — filters", () => {
   });
 
   it("agent filter narrows to one agent", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.loops.list({ agent: "alpha" });
     expect(out.items.map((r) => r.loopId).sort()).toEqual([
       "loop-a-done",
@@ -871,7 +878,7 @@ describe("loops.list — filters", () => {
   });
 
   it("status='running' returns running loops (regardless of pa flag)", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.loops.list({ status: "running" });
     expect(out.items.map((r) => r.loopId).sort()).toEqual([
       "loop-a-running",
@@ -880,13 +887,13 @@ describe("loops.list — filters", () => {
   });
 
   it("status='waiting_approval' surfaces only loops with pending_approval=true", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.loops.list({ status: "waiting_approval" });
     expect(out.items.map((r) => r.loopId)).toEqual(["loop-b-running-pa"]);
   });
 
   it("agent + status combine (AND)", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.loops.list({
       agent: "beta",
       status: "running",
@@ -895,7 +902,7 @@ describe("loops.list — filters", () => {
   });
 
   it("unknown agent → empty page", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.loops.list({ agent: "ghost" });
     expect(out).toEqual({ items: [], nextCursor: null });
   });
@@ -911,7 +918,7 @@ describe("loops.list — pagination via started_at cursor", () => {
         startedAt: ts(i),
       });
     }
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const page1 = await caller.loops.list({ limit: 2 });
     expect(page1.items.map((r) => r.loopId)).toEqual(["loop-4", "loop-3"]);
     expect(page1.nextCursor).toBe(ts(3));
@@ -932,7 +939,7 @@ describe("loops.list — pagination via started_at cursor", () => {
   });
 
   it("limit defaults sensibly and clamps to max", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     let caught: TRPCError | null = null;
     try {
       await caller.loops.list({ limit: 1000 });
@@ -945,7 +952,7 @@ describe("loops.list — pagination via started_at cursor", () => {
 
 describe("loops.list — input validation", () => {
   it("rejects empty status string", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     let caught: TRPCError | null = null;
     try {
       await caller.loops.list({ status: "" });
@@ -956,7 +963,7 @@ describe("loops.list — input validation", () => {
   });
 
   it("rejects empty agent string", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     let caught: TRPCError | null = null;
     try {
       await caller.loops.list({ agent: "" });
@@ -1007,7 +1014,7 @@ function seedIter(db: Database, opts: SeedIterOpts): void {
 
 describe("loops.get — unknown id", () => {
   it("returns null for an unknown loop_id", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.loops.get({ loopId: "ghost" });
     expect(out).toBeNull();
   });
@@ -1065,7 +1072,7 @@ describe("loops.get — happy path", () => {
       finishedAt: null,
     });
 
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.loops.get({ loopId: "loop-detail" });
     expect(out).not.toBeNull();
     expect(out!.loopId).toBe("loop-detail");
@@ -1087,7 +1094,7 @@ describe("loops.get — happy path", () => {
 
   it("returns empty iterations array when none recorded yet", async () => {
     seedListLoop(db, { loopId: "loop-fresh", agent: "alpha" });
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.loops.get({ loopId: "loop-fresh" });
     expect(out).not.toBeNull();
     expect(out!.iterations).toEqual([]);
@@ -1102,7 +1109,7 @@ describe("loops.get — happy path", () => {
       finishedAt: null,
       finishReason: null,
     });
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.loops.get({ loopId: "loop-nullable" });
     expect(out!.maxCostUsd).toBeNull();
     expect(out!.finishedAt).toBeNull();
@@ -1127,7 +1134,7 @@ describe("loops.get — iteration cap", () => {
         status: "done",
       });
     }
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     const out = await caller.loops.get({ loopId: "loop-big" });
     expect(out!.iterations.length).toBe(100);
     // The 100 most-recent rows, ASC: iter 51..150.
@@ -1140,7 +1147,7 @@ describe("loops.get — iteration cap", () => {
 
 describe("loops.get — input validation", () => {
   it("rejects empty loopId", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     let caught: TRPCError | null = null;
     try {
       await caller.loops.get({ loopId: "" });
@@ -1151,7 +1158,7 @@ describe("loops.get — input validation", () => {
   });
 
   it("rejects loopId longer than 128 chars", async () => {
-    const caller = appRouter.createCaller({});
+    const caller = appRouter.createCaller({ userId: "owner" });
     let caught: TRPCError | null = null;
     try {
       await caller.loops.get({ loopId: "x".repeat(129) });
@@ -1288,20 +1295,26 @@ describe("loops.start — happy path (text envelope)", () => {
     expect(payload.channelChatId).toBeUndefined();
   });
 
-  it("omits user_id from MCP params when caller is unauthenticated", async () => {
+  it("rejects unauthenticated caller with UNAUTHORIZED + audits rbac_denied (P4-T03)", async () => {
     const { client, calls } = fakePool(async () => ({ loop_id: "loop-anon" }));
     const caller = appRouter.createCaller({
       mcp: client,
       userId: null,
       req: makeReq({}, "loops.start"),
     });
-    await caller.loops.start({
-      agentName: "alpha",
-      goal: "x",
-      doneWhen: "manual:",
-    });
-    expect((calls[0]!.params as { user_id?: string }).user_id).toBeUndefined();
-    expect(rows(db)[0]!.user_id).toBeNull();
+    await expect(
+      caller.loops.start({
+        agentName: "alpha",
+        goal: "x",
+        doneWhen: "manual:",
+      }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(calls.length).toBe(0);
+    const all = rows(db);
+    expect(all.length).toBe(1);
+    expect(all[0]!.action).toBe("rbac_denied");
+    expect(all[0]!.resource_type).toBe("loops.start");
+    expect(all[0]!.user_id).toBeNull();
   });
 });
 
@@ -1864,16 +1877,23 @@ describe("loops.cancel — MCP error mapping", () => {
 });
 
 describe("loops.cancel — context propagation", () => {
-  it("writes user_id=null when caller is unauthenticated", async () => {
+  it("rejects unauthenticated caller with UNAUTHORIZED + audits rbac_denied (P4-T03)", async () => {
     seedLoop(db, { loopId: "loop-c-anon", status: "running", pendingApproval: false });
-    const { client } = fakePool(async () => ({ ok: true }));
+    const { client, calls } = fakePool(async () => ({ ok: true }));
     const caller = appRouter.createCaller({
       mcp: client,
       userId: null,
       req: makeReq({}, "loops.cancel"),
     });
-    await caller.loops.cancel({ loopId: "loop-c-anon" });
-    expect(rows(db)[0]!.user_id).toBeNull();
+    await expect(
+      caller.loops.cancel({ loopId: "loop-c-anon" }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(calls.length).toBe(0);
+    const all = rows(db);
+    expect(all.length).toBe(1);
+    expect(all[0]!.action).toBe("rbac_denied");
+    expect(all[0]!.resource_type).toBe("loops.cancel");
+    expect(all[0]!.user_id).toBeNull();
   });
 });
 

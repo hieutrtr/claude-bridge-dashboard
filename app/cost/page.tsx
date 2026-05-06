@@ -8,6 +8,7 @@
 // no dispatch, no DB writes — guard mirrors T05/T06/T07/T08.
 
 import { appRouter } from "@/src/server/routers/_app";
+import { getSessionSubject } from "@/src/server/session";
 import { CostCharts } from "@/src/components/cost-charts";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +24,8 @@ function formatSinceDate(iso: string): string {
 }
 
 export default async function CostPage() {
-  const caller = appRouter.createCaller({});
+  const userId = await getSessionSubject();
+  const caller = appRouter.createCaller({ userId });
   const [summary, daily] = await Promise.all([
     caller.analytics.summary({ window: "30d" }),
     caller.analytics.dailyCost({}),

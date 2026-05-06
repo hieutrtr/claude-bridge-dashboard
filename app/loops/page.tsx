@@ -9,6 +9,7 @@
 // into this same page in later iterations.
 
 import { appRouter } from "@/src/server/routers/_app";
+import { getSessionSubject } from "@/src/server/session";
 import { LoopFilters } from "@/src/components/loop-filters";
 import { LoopTable } from "@/src/components/loop-table";
 import {
@@ -52,7 +53,8 @@ export default async function LoopsPage({ searchParams }: PageProps) {
   const agent = readString(sp.agent);
   const cursor = readString(sp.cursor);
 
-  const caller = appRouter.createCaller({});
+  const userId = await getSessionSubject();
+  const caller = appRouter.createCaller({ userId });
   const page = await caller.loops.list({
     ...(status !== null ? { status } : {}),
     ...(agent !== null ? { agent } : {}),

@@ -14,6 +14,7 @@ import { notFound } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 
 import { appRouter } from "@/src/server/routers/_app";
+import { getSessionSubject } from "@/src/server/session";
 import { agentStatusBadge } from "@/src/lib/agent-status";
 import { MARKDOWN_REHYPE_PLUGINS } from "@/src/lib/markdown";
 import { Badge } from "@/src/components/ui/badge";
@@ -48,7 +49,8 @@ export default async function AgentDetailPage({ params, searchParams }: PageProp
   const tab = readTab(sp.tab);
   const cursor = readCursor(sp.cursor);
 
-  const caller = appRouter.createCaller({});
+  const userId = await getSessionSubject();
+  const caller = appRouter.createCaller({ userId });
   const agent = await caller.agents.get({ name });
   if (!agent) {
     notFound();

@@ -3,12 +3,14 @@
 // the rows to the pure AgentsGrid component.
 
 import { appRouter } from "@/src/server/routers/_app";
+import { getSessionSubject } from "@/src/server/session";
 import { AgentsGrid } from "@/src/components/agents-grid";
 
 export const dynamic = "force-dynamic";
 
 export default async function AgentsPage() {
-  const caller = appRouter.createCaller({});
+  const userId = await getSessionSubject();
+  const caller = appRouter.createCaller({ userId });
   const agents = await caller.agents.list();
   return (
     <div className="space-y-6">

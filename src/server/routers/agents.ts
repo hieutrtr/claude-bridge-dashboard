@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { asc, eq } from "drizzle-orm";
 
-import { publicProcedure, router } from "../trpc";
+import { authedProcedure, router } from "../trpc";
 import { getDb } from "../db";
 import { agents } from "../../db/schema";
 import type { Agent, AgentMemory } from "../dto";
@@ -43,7 +43,7 @@ function claudeHome(): string {
 }
 
 export const agentsRouter = router({
-  list: publicProcedure.query((): Agent[] => {
+  list: authedProcedure.query((): Agent[] => {
     return getDb()
       .select(AGENT_DTO_SELECTION)
       .from(agents)
@@ -56,7 +56,7 @@ export const agentsRouter = router({
   // project_dir ASC so the result is deterministic; in the single-user
   // setup this collision is rare. T11 may add a UI affordance if this
   // turns out to bite anyone.
-  get: publicProcedure
+  get: authedProcedure
     .input(z.object({ name: z.string().min(1) }))
     .query(({ input }): Agent | null => {
       const rows = getDb()
@@ -75,7 +75,7 @@ export const agentsRouter = router({
   // `readFileSync` — no filesystem writes. The on-disk path is
   // constrained to the agent's own slug, so the user can't pivot the
   // read to an arbitrary path.
-  memory: publicProcedure
+  memory: authedProcedure
     .input(z.object({ name: z.string().min(1) }))
     .query(({ input }): AgentMemory | null => {
       const row = getDb()
