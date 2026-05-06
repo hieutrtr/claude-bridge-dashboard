@@ -240,6 +240,45 @@ export interface LoopRejectResult {
   alreadyFinalized: boolean;
 }
 
+// P3-T1 — wire shape returned by `loops.list`. Curated subset of the
+// vendored `loops` table (`src/db/schema.ts`) — column set chosen to
+// keep `/loops` table rendering self-sufficient (status badge, agent
+// link, iter progress, budget). `goal` is intentionally NOT included
+// in the list payload (privacy precedent §c — same rule the audit log
+// applies to dispatch prompts and reject reasons); detail page (T2)
+// fetches the full row separately.
+//
+// `pendingApproval` is on the wire so the table can flag rows that
+// need a human gate without a second round-trip — T4 lights up an
+// "Awaiting approval" pill on those rows.
+//
+// `totalCostUsd` is `NOT NULL` in the daemon schema (defaults to 0);
+// `maxCostUsd` is nullable (loop without a budget cap). The UI shows
+// "$X.XX / $Y.YY" when capped or "$X.XX / —" when uncapped.
+export interface LoopListRow {
+  loopId: string;
+  agent: string;
+  status: string;
+  loopType: string;
+  currentIteration: number;
+  maxIterations: number;
+  totalCostUsd: number;
+  maxCostUsd: number | null;
+  pendingApproval: boolean;
+  startedAt: string;
+  finishedAt: string | null;
+  finishReason: string | null;
+}
+
+export interface LoopListPage {
+  items: LoopListRow[];
+  // `loops.loop_id` is a TEXT primary key, so the cursor is the
+  // started_at ISO string (DESC ordering = most-recent first; cursor
+  // = oldest-rendered timestamp). The TEXT comparison is lexicographic
+  // and ISO-8601 sorts identically to the natural date order.
+  nextCursor: string | null;
+}
+
 // P2-T05 — wire shape returned by `audit.list`. Mirrors the
 // dashboard-owned `audit_log` columns (T04) plus a parsed `payload`.
 //

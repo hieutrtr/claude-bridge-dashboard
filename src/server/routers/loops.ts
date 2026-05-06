@@ -28,7 +28,7 @@
 
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
+import { and, desc, eq, lt } from "drizzle-orm";
 
 import { publicProcedure, router } from "../trpc";
 import { getDb } from "../db";
@@ -36,7 +36,44 @@ import { loops } from "../../db/schema";
 import { appendAudit } from "../audit";
 import { McpPoolError } from "../mcp/pool";
 import { auditFailureCode, mapMcpErrorToTrpc } from "../mcp/errors";
-import type { LoopApproveResult, LoopRejectResult } from "../dto";
+import type {
+  LoopApproveResult,
+  LoopListPage,
+  LoopRejectResult,
+} from "../dto";
+
+// P3-T1 — `loops.list` input. Read-only query over the vendored
+// `loops` table. `status` accepts the daemon's literal column values
+// (`running`, `done`, `cancelled`, `failed`) plus a synthetic
+// `waiting_approval` sentinel that maps to `pending_approval=true`
+// (the daemon keeps `status` at "running" while waiting for a human).
+//
+// `cursor` is the `started_at` ISO string of the oldest row on the
+// previous page — `started_at` is TEXT in the daemon schema and ISO-
+// 8601 sorts identically to natural date order under SQLite's lex
+// comparison. `limit` clamps at 100 (well below the
+// no-virtualization threshold per v1 ARCH §11).
+const ListInput = z.object({
+  status: z.string().min(1).optional(),
+  agent: z.string().min(1).optional(),
+  cursor: z.string().min(1).optional(),
+  limit: z.number().int().min(1).max(100).default(50),
+});
+
+const LIST_DTO_SELECTION = {
+  loopId: loops.loopId,
+  agent: loops.agent,
+  status: loops.status,
+  loopType: loops.loopType,
+  currentIteration: loops.currentIteration,
+  maxIterations: loops.maxIterations,
+  totalCostUsd: loops.totalCostUsd,
+  maxCostUsd: loops.maxCostUsd,
+  pendingApproval: loops.pendingApproval,
+  startedAt: loops.startedAt,
+  finishedAt: loops.finishedAt,
+  finishReason: loops.finishReason,
+} as const;
 
 const ApproveInput = z.object({
   loopId: z.string().min(1).max(128),
@@ -74,6 +111,48 @@ function lookupLoop(loopId: string): LoopRow | undefined {
 }
 
 export const loopsRouter = router({
+  // P3-T1 — list loops with optional `status` / `agent` filters and
+  // started_at-DESC cursor pagination. Read-only — no MCP, no audit
+  // (queries are not audited per Phase 2 scope decision).
+  //
+  // Filtering on `status="waiting_approval"` is the only synthetic
+  // case: the daemon keeps `loops.status="running"` while waiting on
+  // a human, so we map the sentinel to `pending_approval=true`.
+  list: publicProcedure
+    .input(ListInput)
+    .query(({ input }): LoopListPage => {
+      const db = getDb();
+
+      const filters = [];
+      if (input.agent !== undefined) {
+        filters.push(eq(loops.agent, input.agent));
+      }
+      if (input.status !== undefined) {
+        if (input.status === "waiting_approval") {
+          filters.push(eq(loops.pendingApproval, true));
+        } else {
+          filters.push(eq(loops.status, input.status));
+        }
+      }
+      if (input.cursor !== undefined) {
+        filters.push(lt(loops.startedAt, input.cursor));
+      }
+
+      const items = db
+        .select(LIST_DTO_SELECTION)
+        .from(loops)
+        .where(filters.length > 0 ? and(...filters) : undefined)
+        .orderBy(desc(loops.startedAt))
+        .limit(input.limit)
+        .all();
+
+      const nextCursor =
+        items.length === input.limit
+          ? (items[items.length - 1]!.startedAt ?? null)
+          : null;
+      return { items, nextCursor };
+    }),
+
   // P2-T06 — approve a loop sitting in `pending_approval=true`.
   // Server-confirmed (no optimistic UI). Calls daemon's
   // `bridge_loop_approve({ loop_id })` MCP tool via the T12 pool.

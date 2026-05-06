@@ -667,3 +667,289 @@ describe("loops — multi-channel race (approve then reject)", () => {
     expect(all[1]!.payload_json).not.toContain("too late");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────
+// P3-T1 — loops.list (read-only query, no MCP)
+// ─────────────────────────────────────────────────────────────────────
+//
+// `seedLoop` only fills the columns the approve / reject procedures
+// read. `loops.list` projects more columns, so this helper takes the
+// extras explicitly. Defaults match the daemon's CREATE TABLE
+// defaults.
+
+interface SeedListLoopOpts {
+  loopId: string;
+  agent?: string;
+  status?: string;
+  loopType?: string;
+  pendingApproval?: boolean;
+  currentIteration?: number;
+  maxIterations?: number;
+  totalCostUsd?: number;
+  maxCostUsd?: number | null;
+  startedAt?: string;
+  finishedAt?: string | null;
+  finishReason?: string | null;
+  goal?: string;
+}
+
+function seedListLoop(db: Database, opts: SeedListLoopOpts): void {
+  const agent = opts.agent ?? "alpha";
+  const status = opts.status ?? "running";
+  const loopType = opts.loopType ?? "bridge";
+  const pa = opts.pendingApproval === undefined ? 0 : opts.pendingApproval ? 1 : 0;
+  const currentIteration = opts.currentIteration ?? 0;
+  const maxIterations = opts.maxIterations ?? 10;
+  const totalCostUsd = opts.totalCostUsd ?? 0;
+  const maxCostUsd = opts.maxCostUsd === undefined ? null : opts.maxCostUsd;
+  const startedAt = opts.startedAt ?? new Date().toISOString();
+  const finishedAt = opts.finishedAt ?? null;
+  const finishReason = opts.finishReason ?? null;
+  const goal = opts.goal ?? "fix all tests";
+  db.prepare(
+    `INSERT INTO loops
+       (loop_id, agent, project, goal, done_when, loop_type, status,
+        max_iterations, current_iteration, total_cost_usd, max_cost_usd,
+        pending_approval, started_at, finished_at, finish_reason)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    opts.loopId,
+    agent,
+    `/tmp/${agent}`,
+    goal,
+    "manual:",
+    loopType,
+    status,
+    maxIterations,
+    currentIteration,
+    totalCostUsd,
+    maxCostUsd,
+    pa,
+    startedAt,
+    finishedAt,
+    finishReason,
+  );
+}
+
+describe("loops.list — empty + ordering", () => {
+  it("empty DB → empty page, null cursor", async () => {
+    const caller = appRouter.createCaller({});
+    const out = await caller.loops.list({});
+    expect(out).toEqual({ items: [], nextCursor: null });
+  });
+
+  it("orders DESC by started_at", async () => {
+    // Inserted out of order on purpose.
+    seedListLoop(db, {
+      loopId: "loop-mid",
+      startedAt: "2026-05-04T12:00:00.000Z",
+    });
+    seedListLoop(db, {
+      loopId: "loop-old",
+      startedAt: "2026-05-01T10:00:00.000Z",
+    });
+    seedListLoop(db, {
+      loopId: "loop-new",
+      startedAt: "2026-05-06T08:00:00.000Z",
+    });
+    const caller = appRouter.createCaller({});
+    const out = await caller.loops.list({});
+    expect(out.items.map((r) => r.loopId)).toEqual([
+      "loop-new",
+      "loop-mid",
+      "loop-old",
+    ]);
+  });
+});
+
+describe("loops.list — wire shape", () => {
+  it("projects only the wire columns; no `goal` text leaks", async () => {
+    seedListLoop(db, {
+      loopId: "loop-shape",
+      agent: "betty",
+      status: "running",
+      loopType: "agent",
+      currentIteration: 3,
+      maxIterations: 8,
+      totalCostUsd: 0.123,
+      maxCostUsd: 5.0,
+      pendingApproval: true,
+      startedAt: "2026-05-06T01:02:03.000Z",
+      finishedAt: null,
+      finishReason: null,
+      goal: "SECRET_GOAL_TEXT_DO_NOT_LEAK",
+    });
+    const caller = appRouter.createCaller({});
+    const out = await caller.loops.list({});
+    expect(out.items.length).toBe(1);
+    const row = out.items[0]!;
+    expect(row).toEqual({
+      loopId: "loop-shape",
+      agent: "betty",
+      status: "running",
+      loopType: "agent",
+      currentIteration: 3,
+      maxIterations: 8,
+      totalCostUsd: 0.123,
+      maxCostUsd: 5.0,
+      pendingApproval: true,
+      startedAt: "2026-05-06T01:02:03.000Z",
+      finishedAt: null,
+      finishReason: null,
+    });
+    // Privacy: `goal` is not part of the list payload.
+    expect(JSON.stringify(row)).not.toContain("SECRET_GOAL_TEXT_DO_NOT_LEAK");
+  });
+
+  it("nullable columns surface as null", async () => {
+    seedListLoop(db, {
+      loopId: "loop-null",
+      maxCostUsd: null,
+      finishedAt: null,
+      finishReason: null,
+    });
+    const caller = appRouter.createCaller({});
+    const out = await caller.loops.list({});
+    expect(out.items[0]!.maxCostUsd).toBeNull();
+    expect(out.items[0]!.finishedAt).toBeNull();
+    expect(out.items[0]!.finishReason).toBeNull();
+  });
+});
+
+describe("loops.list — filters", () => {
+  beforeEach(() => {
+    seedListLoop(db, {
+      loopId: "loop-a-running",
+      agent: "alpha",
+      status: "running",
+      pendingApproval: false,
+      startedAt: "2026-05-01T10:00:00.000Z",
+    });
+    seedListLoop(db, {
+      loopId: "loop-a-done",
+      agent: "alpha",
+      status: "done",
+      pendingApproval: false,
+      startedAt: "2026-05-02T10:00:00.000Z",
+    });
+    seedListLoop(db, {
+      loopId: "loop-b-running-pa",
+      agent: "beta",
+      status: "running",
+      pendingApproval: true,
+      startedAt: "2026-05-03T10:00:00.000Z",
+    });
+    seedListLoop(db, {
+      loopId: "loop-b-cancelled",
+      agent: "beta",
+      status: "cancelled",
+      pendingApproval: false,
+      startedAt: "2026-05-04T10:00:00.000Z",
+    });
+  });
+
+  it("agent filter narrows to one agent", async () => {
+    const caller = appRouter.createCaller({});
+    const out = await caller.loops.list({ agent: "alpha" });
+    expect(out.items.map((r) => r.loopId).sort()).toEqual([
+      "loop-a-done",
+      "loop-a-running",
+    ]);
+  });
+
+  it("status='running' returns running loops (regardless of pa flag)", async () => {
+    const caller = appRouter.createCaller({});
+    const out = await caller.loops.list({ status: "running" });
+    expect(out.items.map((r) => r.loopId).sort()).toEqual([
+      "loop-a-running",
+      "loop-b-running-pa",
+    ]);
+  });
+
+  it("status='waiting_approval' surfaces only loops with pending_approval=true", async () => {
+    const caller = appRouter.createCaller({});
+    const out = await caller.loops.list({ status: "waiting_approval" });
+    expect(out.items.map((r) => r.loopId)).toEqual(["loop-b-running-pa"]);
+  });
+
+  it("agent + status combine (AND)", async () => {
+    const caller = appRouter.createCaller({});
+    const out = await caller.loops.list({
+      agent: "beta",
+      status: "running",
+    });
+    expect(out.items.map((r) => r.loopId)).toEqual(["loop-b-running-pa"]);
+  });
+
+  it("unknown agent → empty page", async () => {
+    const caller = appRouter.createCaller({});
+    const out = await caller.loops.list({ agent: "ghost" });
+    expect(out).toEqual({ items: [], nextCursor: null });
+  });
+});
+
+describe("loops.list — pagination via started_at cursor", () => {
+  it("returns nextCursor when page is full; second page is older rows", async () => {
+    const ts = (i: number): string =>
+      new Date(Date.UTC(2026, 4, 6, 0, 0, i)).toISOString();
+    for (let i = 0; i < 5; i++) {
+      seedListLoop(db, {
+        loopId: `loop-${i}`,
+        startedAt: ts(i),
+      });
+    }
+    const caller = appRouter.createCaller({});
+    const page1 = await caller.loops.list({ limit: 2 });
+    expect(page1.items.map((r) => r.loopId)).toEqual(["loop-4", "loop-3"]);
+    expect(page1.nextCursor).toBe(ts(3));
+
+    const page2 = await caller.loops.list({
+      limit: 2,
+      cursor: page1.nextCursor!,
+    });
+    expect(page2.items.map((r) => r.loopId)).toEqual(["loop-2", "loop-1"]);
+    expect(page2.nextCursor).toBe(ts(1));
+
+    const page3 = await caller.loops.list({
+      limit: 2,
+      cursor: page2.nextCursor!,
+    });
+    expect(page3.items.map((r) => r.loopId)).toEqual(["loop-0"]);
+    expect(page3.nextCursor).toBeNull();
+  });
+
+  it("limit defaults sensibly and clamps to max", async () => {
+    const caller = appRouter.createCaller({});
+    let caught: TRPCError | null = null;
+    try {
+      await caller.loops.list({ limit: 1000 });
+    } catch (e) {
+      caught = e as TRPCError;
+    }
+    expect(caught!.code).toBe("BAD_REQUEST");
+  });
+});
+
+describe("loops.list — input validation", () => {
+  it("rejects empty status string", async () => {
+    const caller = appRouter.createCaller({});
+    let caught: TRPCError | null = null;
+    try {
+      await caller.loops.list({ status: "" });
+    } catch (e) {
+      caught = e as TRPCError;
+    }
+    expect(caught!.code).toBe("BAD_REQUEST");
+  });
+
+  it("rejects empty agent string", async () => {
+    const caller = appRouter.createCaller({});
+    let caught: TRPCError | null = null;
+    try {
+      await caller.loops.list({ agent: "" });
+    } catch (e) {
+      caught = e as TRPCError;
+    }
+    expect(caught!.code).toBe("BAD_REQUEST");
+  });
+});
