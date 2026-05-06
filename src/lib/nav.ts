@@ -9,6 +9,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { label: "Loops", href: "/loops" },
   { label: "Schedules", href: "/schedules" },
   { label: "Cost", href: "/cost" },
+  { label: "Audit", href: "/audit" },
 ] as const;
 
 export function isNavActive(pathname: string, href: string): boolean {

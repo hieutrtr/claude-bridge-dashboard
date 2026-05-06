@@ -239,3 +239,34 @@ export interface LoopRejectResult {
   ok: true;
   alreadyFinalized: boolean;
 }
+
+// P2-T05 — wire shape returned by `audit.list`. Mirrors the
+// dashboard-owned `audit_log` columns (T04) plus a parsed `payload`.
+//
+// `payload` is a best-effort `JSON.parse(payload_json)` — the audit
+// writer (T04) controls serialisation, so this is normally well-formed
+// JSON, but we never throw on parse failure: viewers should be able to
+// surface malformed rows for forensics. When `payloadJson` is `null`
+// (no payload supplied) or fails to parse, `payload` is also `null`.
+//
+// `createdAt` is `INTEGER NOT NULL` ms-epoch (T04 schema). We keep
+// it as a number on the wire so the client can format relative times
+// without timezone parsing overhead.
+export interface AuditLogRow {
+  id: number;
+  userId: string | null;
+  action: string;
+  resourceType: string;
+  resourceId: string | null;
+  payloadJson: string | null;
+  payload: unknown | null;
+  ipHash: string | null;
+  userAgent: string | null;
+  requestId: string | null;
+  createdAt: number;
+}
+
+export interface AuditLogPage {
+  items: AuditLogRow[];
+  nextCursor: number | null;
+}

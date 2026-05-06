@@ -11,10 +11,11 @@
 >    write **and** the daemon-side post-MCP write, joined by `request_id`.
 > 5. Have a confirmation step for destructive actions (P2-T11).
 >
-> **Status:** Iter 9/15 — T12 (MCP pool), T08 (CSRF), T07 (rate-limit),
+> **Status:** Iter 10/15 — T12 (MCP pool), T08 (CSRF), T07 (rate-limit),
 > T04 (audit log), T01 (`tasks.dispatch` via MCP), T03 (`tasks.kill` via
 > MCP), T06 (`loops.approve` / `loops.reject` via MCP), T02 (dispatch
-> dialog UI ⌘K) landed. T05, T09..T11 + phase-test + sign-off remain.
+> dialog UI ⌘K), T05 (`/audit` viewer page) landed. T09..T11 + phase-test
+> + sign-off remain.
 
 ---
 
@@ -75,7 +76,7 @@ mitigation extracted from `docs/PHASE-2-REVIEW.md`) and a matching
 - [x] **T02 — Dispatch dialog UI (⌘K)** *(scope: client-side modal mounted globally, triggered by `⌘K` / button on `/agents`, with agent selector (`agents.list`) + textarea prompt + cost estimate placeholder. On submit calls `tasks.dispatch` mutation, shows toast linking to `/tasks/[id]`. shadcn `<Dialog>` + `<Command>` primitives.)* — Risk: **Low** (UI work; cost-estimate is rough).
 - [x] **T03 — Kill task action** *(scope: `tasks.kill({ id })` tRPC mutation calling MCP `bridge_kill` for the task's agent. Idempotent (already-done → return ok with warning, not error). Kill button on `/tasks/[id]` for `running` tasks; status flips to `killed` in ≤ 2 s.)* — Risk: **Medium** (idempotency surface; UI lag → killing already-done task should not error confusingly).
 - [x] **T04 — Audit log table & write helper** *(scope: SQLite migration for `audit_log(id, user_id, action, resource_type, resource_id, payload_json, ip_hash, user_agent, request_id, created_at)` matching v1 ARCH §3. `appendAudit({ ctx, action, resource, payload })` helper used by every mutation procedure. IP hash = SHA-256 + per-install salt (read once at boot).)* — Risk: **Low** (DB write). Cross-cutting dependency for T1/T3/T6/T9.
-- [ ] **T05 — Audit log viewer page** *(scope: `/audit` route, owner-only, virtualized table (5 000+ rows), filters by user/action/resource/date. Reuses `<TaskFilters>` URL-param pattern from Phase 1. `system.auditLog` query already declared in v1 §4.6 — implement here.)* — Risk: **Low** (reuse pattern from `/tasks`).
+- [x] **T05 — Audit log viewer page** *(scope: `/audit` route, owner-only, virtualized table (5 000+ rows), filters by user/action/resource/date. Reuses `<TaskFilters>` URL-param pattern from Phase 1. `system.auditLog` query already declared in v1 §4.6 — implement here.)* — Risk: **Low** (reuse pattern from `/tasks`).
 - [x] **T06 — Loop approve/reject inline** *(scope: in `/tasks/[id]` task detail, when the task is part of a loop in `pending_approval`, render Approve / Reject buttons. tRPC `loops.approve({ loopId })` / `loops.reject({ loopId, reason? })` mutations call MCP `bridge_loop_approve` / `bridge_loop_reject`. **Server-confirmed UI** — no optimistic update for this mutation per review §d.1.)* — Risk: **High** (race: same loop approved on web + rejected on Telegram simultaneously; daemon needs `BEGIN IMMEDIATE` or compare-and-swap).
 - [x] **T07 — Rate-limit middleware** *(scope: tRPC `procedure` middleware enforcing token-bucket of 30 mutations/min/user. In-memory map keyed by `userId`; return tRPC `TOO_MANY_REQUESTS` (HTTP 429) with `Retry-After` header. Also rate-limit pre-auth `/login` to 5 req/min/IP per v1 §10. Audit-log a `rate_limit_blocked` row.)* — Risk: **Low** (single-process). Note: multi-replica deferred to Phase 4.
 - [x] **T08 — CSRF double-submit cookie** *(scope: `csrf-csrf` lib (or hand-rolled HMAC token) issuing `csrfToken` cookie + `x-csrf-token` header on every mutation request. Missing/mismatch → HTTP 403. Applied at tRPC HTTP entry — `app/api/trpc/[trpc]/route.ts`. ADR: tRPC POST mutations only — Server Actions are not used. Documented in `docs/adr/0001-csrf-strategy.md`.)* — Risk: **Medium** (Next.js Server Actions vs tRPC POST mismatch — this task locks tRPC POST as the only mutation surface).

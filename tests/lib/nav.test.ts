@@ -3,14 +3,16 @@ import { describe, it, expect } from "bun:test";
 import { NAV_ITEMS, isNavActive } from "../../src/lib/nav";
 
 describe("NAV_ITEMS", () => {
-  it("exports exactly 5 items in plan-defined order", () => {
-    expect(NAV_ITEMS.length).toBe(5);
+  // Phase 2 T05 added the Audit entry after Cost.
+  it("exports exactly 6 items in plan-defined order", () => {
+    expect(NAV_ITEMS.length).toBe(6);
     expect(NAV_ITEMS.map((i) => i.label)).toEqual([
       "Agents",
       "Tasks",
       "Loops",
       "Schedules",
       "Cost",
+      "Audit",
     ]);
     expect(NAV_ITEMS.map((i) => i.href)).toEqual([
       "/agents",
@@ -18,6 +20,7 @@ describe("NAV_ITEMS", () => {
       "/loops",
       "/schedules",
       "/cost",
+      "/audit",
     ]);
   });
 });
