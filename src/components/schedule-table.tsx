@@ -14,6 +14,7 @@ import Link from "next/link";
 
 import { Badge } from "@/src/components/ui/badge";
 import { Card, CardContent } from "@/src/components/ui/card";
+import { ScheduleRowActions } from "@/src/components/schedule-row-actions";
 import { formatCadence, formatNextRun } from "@/src/lib/cron-format";
 import type { ScheduleListRow } from "@/src/server/dto";
 
@@ -103,6 +104,7 @@ export function ScheduleTable({ items, isFiltered }: ScheduleTableProps) {
               <th className="px-3 py-2 font-medium">Last run</th>
               <th className="px-3 py-2 font-medium">Status</th>
               <th className="px-3 py-2 font-medium text-right">Runs</th>
+              <th className="px-3 py-2 font-medium text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -153,6 +155,13 @@ export function ScheduleTable({ items, isFiltered }: ScheduleTableProps) {
                   </td>
                   <td className="px-3 py-2 text-right font-mono text-xs">
                     {row.runCount}
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    <ScheduleRowActions
+                      scheduleId={row.id}
+                      scheduleName={row.name}
+                      enabled={row.enabled}
+                    />
                   </td>
                 </tr>
               );

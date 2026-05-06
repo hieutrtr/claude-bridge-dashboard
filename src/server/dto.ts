@@ -446,3 +446,15 @@ export interface ScheduleListPage {
 export interface ScheduleAddResult {
   id: number;
 }
+
+// P3-T7 — wire shape returned by `schedules.pause`, `schedules.resume`,
+// and `schedules.remove`. The daemon's `bridge_schedule_{pause,resume,
+// remove}` tools return a text envelope on success and throw on
+// unknown ids; the procedure does not parse the daemon reply (no id
+// echo to normalise) — a non-throwing call yields `{ ok: true }`.
+// `NOT_FOUND` is thrown server-side when the row lookup misses;
+// MCP-level failures map through `mapMcpErrorToTrpc` like every other
+// Phase 3 mutation.
+export interface ScheduleMutationResult {
+  ok: true;
+}

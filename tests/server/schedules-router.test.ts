@@ -732,3 +732,252 @@ describe("schedules.add — MCP context missing", () => {
     expect(rows(db).length).toBe(0);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────
+// P3-T7 — schedules.pause / schedules.resume / schedules.remove
+// (mutations, call bridge_schedule_{pause,resume,remove})
+// ─────────────────────────────────────────────────────────────────────
+//
+// Same fixture as schedules.add: tmp on-disk DB seeded against the
+// daemon column set, fake MCP client per-test. The three actions
+// share a single test surface because they share their wire shape
+// (input `{ id }`, result `{ ok: true }`) and audit shape
+// (`schedule.<action>` / `schedule.<action>.error` with `payload={ id,
+// name, agentName }`). One per-action `describe` block exercises the
+// happy path; a parametrised block sweeps the shared error matrix.
+//
+// Daemon contract (claude-bridge/src/mcp/tools.ts:300-340) — all three
+// take `{ name_or_id: string }`. We always pass `String(id)` so the
+// daemon path is unambiguous. Daemon throws on unknown id; we surface
+// that as `mapMcpErrorToTrpc` (re-using the T6 matrix).
+
+type ScheduleAction = "pause" | "resume" | "remove";
+const SCHEDULE_ACTIONS: readonly ScheduleAction[] = ["pause", "resume", "remove"];
+const SCHEDULE_TOOL_BY_ACTION: Record<ScheduleAction, string> = {
+  pause: "bridge_schedule_pause",
+  resume: "bridge_schedule_resume",
+  remove: "bridge_schedule_remove",
+};
+
+describe("schedules.pause / resume / remove — happy path", () => {
+  for (const action of SCHEDULE_ACTIONS) {
+    it(`${action} → calls daemon MCP tool with name_or_id=String(id)`, async () => {
+      const id = seedSchedule(db, {
+        name: "nightly-tests",
+        agentName: "betty",
+        prompt: "SECRET_PROMPT_DO_NOT_LEAK",
+        cronExpr: "0 0 * * *",
+        enabled: action !== "resume",
+      });
+      const { client, calls } = fakePool(async () => ({
+        content: [{ type: "text", text: `Schedule ${id} ${action}d` }],
+      }));
+      const req = makeReq(
+        { "x-forwarded-for": "9.9.9.9", "user-agent": "ua/3" },
+        `schedules.${action}`,
+      );
+
+      const caller = appRouter.createCaller({ mcp: client, userId: "owner", req });
+      const out = await caller.schedules[action]({ id });
+      expect(out).toEqual({ ok: true });
+
+      // MCP call params: name_or_id is the stringified id.
+      expect(calls.length).toBe(1);
+      expect(calls[0]!.method).toBe(SCHEDULE_TOOL_BY_ACTION[action]);
+      expect(calls[0]!.params).toEqual({ name_or_id: String(id) });
+      expect(calls[0]!.opts?.timeoutMs).toBe(15_000);
+
+      // Audit row carries name + agentName (forensic readability) and
+      // the request envelope (ip_hash + user_agent + request_id).
+      const all = rows(db);
+      expect(all.length).toBe(1);
+      expect(all[0]!.action).toBe(`schedule.${action}`);
+      expect(all[0]!.resource_type).toBe("schedule");
+      expect(all[0]!.resource_id).toBe(String(id));
+      expect(all[0]!.user_id).toBe("owner");
+      expect(all[0]!.ip_hash).not.toBeNull();
+      expect(all[0]!.user_agent).toBe("ua/3");
+      expect(all[0]!.request_id).toMatch(/^[0-9a-f-]{36}$/);
+
+      const payload = JSON.parse(all[0]!.payload_json!);
+      expect(payload).toEqual({
+        id,
+        name: "nightly-tests",
+        agentName: "betty",
+      });
+      // Privacy invariant — prompt text never appears on success path.
+      expect(all[0]!.payload_json).not.toContain("SECRET_PROMPT_DO_NOT_LEAK");
+    });
+  }
+
+  it("omits user_id from MCP params when caller is unauthenticated (resume)", async () => {
+    const id = seedSchedule(db, { name: "anon", enabled: false });
+    const { client, calls } = fakePool(async () => ({ ok: true }));
+    const caller = appRouter.createCaller({
+      mcp: client,
+      userId: null,
+      req: makeReq({}, "schedules.resume"),
+    });
+    await caller.schedules.resume({ id });
+    // Daemon resume does not take user_id at all — params are just
+    // name_or_id. We pin the exact shape so a regression
+    // (params bleeding) is caught.
+    expect(calls[0]!.params).toEqual({ name_or_id: String(id) });
+    expect(rows(db)[0]!.user_id).toBeNull();
+  });
+});
+
+describe("schedules.pause / resume / remove — input validation", () => {
+  for (const action of SCHEDULE_ACTIONS) {
+    it(`${action} rejects non-positive id`, async () => {
+      const { client, calls } = fakePool(async () => ({ ok: true }));
+      const caller = appRouter.createCaller({
+        mcp: client,
+        userId: "owner",
+        req: makeReq({}, `schedules.${action}`),
+      });
+      let caught: TRPCError | null = null;
+      try {
+        await caller.schedules[action]({ id: 0 });
+      } catch (e) {
+        caught = e as TRPCError;
+      }
+      expect(caught!.code).toBe("BAD_REQUEST");
+      expect(calls.length).toBe(0);
+      expect(rows(db).length).toBe(0);
+    });
+
+    it(`${action} rejects non-integer id`, async () => {
+      const { client } = fakePool(async () => ({ ok: true }));
+      const caller = appRouter.createCaller({
+        mcp: client,
+        userId: "owner",
+        req: makeReq({}, `schedules.${action}`),
+      });
+      let caught: TRPCError | null = null;
+      try {
+        await caller.schedules[action]({ id: 1.5 });
+      } catch (e) {
+        caught = e as TRPCError;
+      }
+      expect(caught!.code).toBe("BAD_REQUEST");
+    });
+  }
+});
+
+describe("schedules.pause / resume / remove — unknown id", () => {
+  for (const action of SCHEDULE_ACTIONS) {
+    it(`${action} → NOT_FOUND when row does not exist; no MCP call`, async () => {
+      const { client, calls } = fakePool(async () => ({ ok: true }));
+      const caller = appRouter.createCaller({
+        mcp: client,
+        userId: "owner",
+        req: makeReq({}, `schedules.${action}`),
+      });
+      let caught: TRPCError | null = null;
+      try {
+        await caller.schedules[action]({ id: 4242 });
+      } catch (e) {
+        caught = e as TRPCError;
+      }
+      expect(caught!.code).toBe("NOT_FOUND");
+      // No MCP call — server-side guard short-circuits.
+      expect(calls.length).toBe(0);
+      // Audit row records the rejection so the audit page surfaces a
+      // forensic trail (someone tried to act on schedule#4242).
+      const all = rows(db);
+      expect(all.length).toBe(1);
+      expect(all[0]!.action).toBe(`schedule.${action}.error`);
+      expect(all[0]!.resource_id).toBe("4242");
+      const payload = JSON.parse(all[0]!.payload_json!);
+      expect(payload).toEqual({ id: 4242, code: "NOT_FOUND" });
+    });
+  }
+});
+
+describe("schedules.pause / resume / remove — MCP error mapping", () => {
+  type Case = {
+    name: string;
+    poolCode: McpPoolError["code"];
+    trpcCode: TRPCError["code"];
+  };
+  const cases: Case[] = [
+    { name: "MCP_TIMEOUT → TIMEOUT", poolCode: "MCP_TIMEOUT", trpcCode: "TIMEOUT" },
+    {
+      name: "MCP_BACKPRESSURE → TOO_MANY_REQUESTS",
+      poolCode: "MCP_BACKPRESSURE",
+      trpcCode: "TOO_MANY_REQUESTS",
+    },
+    {
+      name: "MCP_CONNECTION_LOST → INTERNAL_SERVER_ERROR",
+      poolCode: "MCP_CONNECTION_LOST",
+      trpcCode: "INTERNAL_SERVER_ERROR",
+    },
+    {
+      name: "MCP_RPC_ERROR → INTERNAL_SERVER_ERROR",
+      poolCode: "MCP_RPC_ERROR",
+      trpcCode: "INTERNAL_SERVER_ERROR",
+    },
+  ];
+
+  for (const action of SCHEDULE_ACTIONS) {
+    for (const c of cases) {
+      it(`${action} ${c.name}`, async () => {
+        const id = seedSchedule(db, {
+          name: "fragile",
+          agentName: "alpha",
+          prompt: "private prompt text",
+        });
+        const { client } = fakePool(async () => {
+          throw new McpPoolError(c.poolCode, "boom");
+        });
+        const caller = appRouter.createCaller({
+          mcp: client,
+          userId: "owner",
+          req: makeReq({}, `schedules.${action}`),
+        });
+        let caught: TRPCError | null = null;
+        try {
+          await caller.schedules[action]({ id });
+        } catch (e) {
+          caught = e as TRPCError;
+        }
+        expect(caught).toBeInstanceOf(TRPCError);
+        expect(caught!.code).toBe(c.trpcCode);
+
+        const all = rows(db);
+        expect(all.length).toBe(1);
+        expect(all[0]!.action).toBe(`schedule.${action}.error`);
+        expect(all[0]!.resource_id).toBe(String(id));
+        const payload = JSON.parse(all[0]!.payload_json!);
+        expect(payload.code).toBe(c.poolCode);
+        expect(payload.id).toBe(id);
+        expect(payload.name).toBe("fragile");
+        expect(payload.agentName).toBe("alpha");
+        // Privacy on every error branch.
+        expect(all[0]!.payload_json).not.toContain("private prompt text");
+      });
+    }
+  }
+});
+
+describe("schedules.pause / resume / remove — MCP context missing", () => {
+  for (const action of SCHEDULE_ACTIONS) {
+    it(`${action} → INTERNAL_SERVER_ERROR when no MCP client wired`, async () => {
+      const id = seedSchedule(db, { name: "x" });
+      const caller = appRouter.createCaller({
+        userId: "owner",
+        req: makeReq({}, `schedules.${action}`),
+      });
+      let caught: TRPCError | null = null;
+      try {
+        await caller.schedules[action]({ id });
+      } catch (e) {
+        caught = e as TRPCError;
+      }
+      expect(caught!.code).toBe("INTERNAL_SERVER_ERROR");
+      // Context guard fires before audit envelope (matches schedules.add).
+      expect(rows(db).length).toBe(0);
+    });
+  }
+});

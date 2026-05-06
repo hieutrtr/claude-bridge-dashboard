@@ -27,6 +27,7 @@ import type {
   ScheduleAddResult,
   ScheduleListPage,
   ScheduleListRow,
+  ScheduleMutationResult,
 } from "../dto";
 
 const ListInput = z.object({
@@ -148,6 +149,127 @@ function extractScheduleId(value: unknown): number | null {
     }
   }
   return null;
+}
+
+// P3-T7 — input + helper for the pause/resume/remove triplet. Defined
+// at module scope (above `schedulesRouter`) so the helper is fully
+// initialised by the time the router-literal evaluates and binds each
+// procedure. (Procedure expressions are eagerly evaluated; const
+// hoisting only hoists the binding, not the value — moving the helper
+// inline would crash with TDZ.)
+const ScheduleActionInput = z.object({
+  id: z.number().int().positive(),
+});
+
+type ScheduleAction = "pause" | "resume" | "remove";
+const SCHEDULE_TOOL_BY_ACTION: Record<ScheduleAction, string> = {
+  pause: "bridge_schedule_pause",
+  resume: "bridge_schedule_resume",
+  remove: "bridge_schedule_remove",
+};
+
+interface ScheduleLookupRow {
+  id: number;
+  name: string;
+  agentName: string;
+}
+
+function lookupSchedule(id: number): ScheduleLookupRow | null {
+  const db = getDb();
+  const rows = db
+    .select({
+      id: schedules.id,
+      name: schedules.name,
+      agentName: schedules.agentName,
+    })
+    .from(schedules)
+    .where(eq(schedules.id, id))
+    .limit(1)
+    .all();
+  if (rows.length === 0) return null;
+  const row = rows[0]!;
+  return {
+    id: row.id,
+    name: row.name,
+    agentName: row.agentName,
+  };
+}
+
+function makeScheduleActionProcedure(action: ScheduleAction) {
+  return publicProcedure
+    .input(ScheduleActionInput)
+    .mutation(async ({ input, ctx }): Promise<ScheduleMutationResult> => {
+      if (!ctx.mcp) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "MCP client not configured on tRPC context",
+        });
+      }
+
+      const auditBase = {
+        resourceType: "schedule" as const,
+        resourceId: String(input.id),
+        userId: ctx.userId ?? null,
+        req: ctx.req,
+      };
+
+      // Path A — server-side existence check. Mirrors `lookupLoop` in
+      // `loops.cancel`: a clean NOT_FOUND for an id the dashboard can't
+      // possibly have rendered (refresh-stale, manual URL entry)
+      // without round-tripping the daemon. The lookup also gives us
+      // the forensic columns (name, agentName) we record on every
+      // audit row.
+      const row = lookupSchedule(input.id);
+      if (row === null) {
+        appendAudit({
+          ...auditBase,
+          action: `schedule.${action}.error`,
+          payload: {
+            id: input.id,
+            code: "NOT_FOUND",
+          },
+        });
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "schedule not found",
+        });
+      }
+
+      const failurePayload: Record<string, unknown> = {
+        id: input.id,
+        name: row.name,
+        agentName: row.agentName,
+      };
+
+      try {
+        await ctx.mcp.call(
+          SCHEDULE_TOOL_BY_ACTION[action],
+          { name_or_id: String(input.id) },
+          { timeoutMs: SCHEDULE_ADD_TIMEOUT_MS },
+        );
+      } catch (err) {
+        appendAudit({
+          ...auditBase,
+          action: `schedule.${action}.error`,
+          payload: {
+            ...failurePayload,
+            code: auditFailureCode(err),
+          },
+        });
+        throw mapMcpErrorToTrpc(err);
+      }
+
+      appendAudit({
+        ...auditBase,
+        action: `schedule.${action}`,
+        payload: {
+          id: input.id,
+          name: row.name,
+          agentName: row.agentName,
+        },
+      });
+      return { ok: true };
+    });
 }
 
 export const schedulesRouter = router({
@@ -320,4 +442,30 @@ export const schedulesRouter = router({
 
       return { id };
     }),
+
+  // P3-T7 — pause / resume / remove. Three sibling mutations that share
+  // the same wire + audit + error shape. Each is built from
+  // `buildScheduleActionProcedure(action)` so the privacy invariant
+  // (prompt text never echoed) and the lookup-then-MCP-then-audit
+  // ordering stay single-sourced. The daemon's
+  // `bridge_schedule_{pause,resume,remove}` MCP tools all take a single
+  // `name_or_id` string; we always pass `String(id)` (the row's
+  // numeric id) so the daemon path is unambiguous.
+  //
+  // Audit shape:
+  //   success → action=`schedule.<action>`, resource_id=String(id),
+  //             payload={ id, name, agentName }
+  //   not-found → action=`schedule.<action>.error`, resource_id=String(id),
+  //               payload={ id, code: "NOT_FOUND" }
+  //   mcp-error → action=`schedule.<action>.error`, resource_id=String(id),
+  //               payload={ id, name, agentName, code }
+  //
+  // No optimistic UI on the server side — that's the client's job. The
+  // procedure is server-confirmed (returns `{ ok: true }` only after
+  // the daemon reply lands). Pause / resume + delete share the
+  // confirmation contract; the dashboard's UX layer decides which
+  // action ships through `runOptimistic` (P2-T10) and which doesn't.
+  pause: makeScheduleActionProcedure("pause"),
+  resume: makeScheduleActionProcedure("resume"),
+  remove: makeScheduleActionProcedure("remove"),
 });
