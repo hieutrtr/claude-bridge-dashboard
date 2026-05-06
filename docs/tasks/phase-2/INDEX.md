@@ -11,14 +11,16 @@
 >    write **and** the daemon-side post-MCP write, joined by `request_id`.
 > 5. Have a confirmation step for destructive actions (P2-T11).
 >
-> **Status:** Iter 12/15 — T12 (MCP pool), T08 (CSRF), T07 (rate-limit),
+> **Status:** Iter 13/15 — T12 (MCP pool), T08 (CSRF), T07 (rate-limit),
 > T04 (audit log), T01 (`tasks.dispatch` via MCP), T03 (`tasks.kill` via
 > MCP), T06 (`loops.approve` / `loops.reject` via MCP), T02 (dispatch
 > dialog UI ⌘K), T05 (`/audit` viewer page), T11 (`<DangerConfirm>`
 > primitive + Kill task button on `/tasks/[id]`), T10
 > (`runOptimistic` helper + `<TaskKillControl>` optimistic kill +
-> dispatch form-preserved-on-error rollback) landed. T09 + phase-test
-> + sign-off remain.
+> dispatch form-preserved-on-error rollback), T09 (SSE
+> `/api/stream/permissions` + `<PermissionRelayToast>` +
+> `permissions.respond` mutation) landed. Phase-test + sign-off
+> remain.
 
 ---
 
@@ -83,7 +85,7 @@ mitigation extracted from `docs/PHASE-2-REVIEW.md`) and a matching
 - [x] **T06 — Loop approve/reject inline** *(scope: in `/tasks/[id]` task detail, when the task is part of a loop in `pending_approval`, render Approve / Reject buttons. tRPC `loops.approve({ loopId })` / `loops.reject({ loopId, reason? })` mutations call MCP `bridge_loop_approve` / `bridge_loop_reject`. **Server-confirmed UI** — no optimistic update for this mutation per review §d.1.)* — Risk: **High** (race: same loop approved on web + rejected on Telegram simultaneously; daemon needs `BEGIN IMMEDIATE` or compare-and-swap).
 - [x] **T07 — Rate-limit middleware** *(scope: tRPC `procedure` middleware enforcing token-bucket of 30 mutations/min/user. In-memory map keyed by `userId`; return tRPC `TOO_MANY_REQUESTS` (HTTP 429) with `Retry-After` header. Also rate-limit pre-auth `/login` to 5 req/min/IP per v1 §10. Audit-log a `rate_limit_blocked` row.)* — Risk: **Low** (single-process). Note: multi-replica deferred to Phase 4.
 - [x] **T08 — CSRF double-submit cookie** *(scope: `csrf-csrf` lib (or hand-rolled HMAC token) issuing `csrfToken` cookie + `x-csrf-token` header on every mutation request. Missing/mismatch → HTTP 403. Applied at tRPC HTTP entry — `app/api/trpc/[trpc]/route.ts`. ADR: tRPC POST mutations only — Server Actions are not used. Documented in `docs/adr/0001-csrf-strategy.md`.)* — Risk: **Medium** (Next.js Server Actions vs tRPC POST mismatch — this task locks tRPC POST as the only mutation surface).
-- [ ] **T09 — Permission relay UI** *(scope: extend `/api/stream/tasks` (or new `/api/stream/permissions`) to multiplex `tool_use_pending` events from the daemon's `permissions` table. Toast with Allow/Deny calls a tRPC mutation that updates the row (or invokes a daemon MCP tool if exposed). Replaces Telegram for the permission flow when the user is at the dashboard.)* — Risk: **High** (cross-repo schema drift on `tool_use_pending` event format; `permissions` table is daemon-owned).
+- [x] **T09 — Permission relay UI** *(scope: extend `/api/stream/tasks` (or new `/api/stream/permissions`) to multiplex `tool_use_pending` events from the daemon's `permissions` table. Toast with Allow/Deny calls a tRPC mutation that updates the row (or invokes a daemon MCP tool if exposed). Replaces Telegram for the permission flow when the user is at the dashboard.)* — Risk: **High** (cross-repo schema drift on `tool_use_pending` event format; `permissions` table is daemon-owned). **Implemented as a separate `/api/stream/permissions` SSE endpoint with diff-based `pending` / `resolved` events; mutation flips the daemon-owned row directly per v1 ARCH §10 (no MCP tool); `<PermissionRelayToast>` mounted globally in `app/layout.tsx`.**
 - [x] **T10 — Optimistic UI updates** *(scope: React Query `useMutation` `onMutate`/`onError` rollback for dispatch + kill. `loops.approve`/`reject` are **server-confirmed** (no optimistic) per review §d.1. Tests assert rollback path on simulated 500.)* — Risk: **Low** (RQ convention). **Implemented as a dependency-free `runOptimistic` helper (no `@tanstack/react-query` in this stack); shape matches RQ `onMutate`/`onError`/`onSuccess` for a clean future migration.**
 - [x] **T11 — Confirmation pattern** *(scope: shadcn `<AlertDialog>` for destructive actions (kill, cancel loop). Typing the agent name (or task ID prefix) to enable the action button. Reusable `<DangerConfirm name=… verb=…>` primitive used by T03 + T06.)* — Risk: **Low** (UX guard).
 - [x] **T12 — MCP client connection pool** *(scope: `src/server/mcp/pool.ts` — long-lived stdio MCP client(s); reuse a single `bridge mcp-stdio` child process per dashboard process; reconnect-on-EOF with exponential backoff; backpressure (pending-request queue with cap = 32) to avoid spawning N child processes for N concurrent mutations. Acceptance: 100 dispatches in parallel → still 1 child process; p95 round-trip < 500 ms; chaos test "kill daemon mid-call" → reset connection cleanly, fail-fast pending requests, no hang.)* — Risk: **Medium** (framing buffer corruption on partial read; signal-handling on Bun.spawn). **Foundation for T1, T3, T6, T9 — must land first.**

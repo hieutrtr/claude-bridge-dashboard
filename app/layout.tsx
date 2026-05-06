@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 
 import "./globals.css";
 import { ThemeProvider } from "@/src/components/theme-provider";
+import { PermissionRelayToast } from "@/src/components/permission-relay-toast";
 import { Sidebar } from "@/src/components/sidebar";
 import { Topbar } from "@/src/components/topbar";
 import { SESSION_COOKIE, readAuthEnv, verifySession } from "@/src/lib/auth";
@@ -43,6 +44,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
                 <Topbar />
                 <main className="flex-1 overflow-auto p-6">{children}</main>
               </div>
+              <PermissionRelayToast />
             </div>
           ) : (
             <main className="min-h-screen">{children}</main>
