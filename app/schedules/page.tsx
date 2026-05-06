@@ -10,6 +10,10 @@
 import { appRouter } from "@/src/server/routers/_app";
 import { ScheduleFilters } from "@/src/components/schedule-filters";
 import { ScheduleTable } from "@/src/components/schedule-table";
+import {
+  ScheduleCreateDialog,
+  ScheduleCreateTrigger,
+} from "@/src/components/schedule-create-dialog";
 
 export const dynamic = "force-dynamic";
 
@@ -45,11 +49,14 @@ export default async function SchedulesPage({ searchParams }: PageProps) {
             first; paused schedules drop to the bottom.
           </p>
         </div>
+        <ScheduleCreateTrigger />
       </header>
 
       <ScheduleFilters agent={agent} />
 
       <ScheduleTable items={page.items} isFiltered={isFiltered} />
+
+      <ScheduleCreateDialog />
     </div>
   );
 }

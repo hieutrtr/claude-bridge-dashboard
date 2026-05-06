@@ -1,26 +1,33 @@
 // P3-T5 — `schedules.*` router. Phase 3 entry point for the recurring-
-// schedule vertical: this commit only ships `list` (read-only over the
-// vendored `schedules` table). The mutation surface
-// (`add`/`pause`/`resume`/`remove`) lands in T6 + T7 and routes through
-// daemon MCP tools (`bridge_schedule_*`) per Phase 3 INDEX invariant.
+// schedule vertical: T5 ships `list` (read-only over the vendored
+// `schedules` table), T6 adds `add` (mutation calling daemon MCP
+// `bridge_schedule_add`). Pause/resume/delete land in T7.
 //
-// Wire shape — see `ScheduleListRow` in `src/server/dto.ts` for the
-// curated column set. No `cursor` pagination this iter: schedules are
-// finite (humans manage them by hand; the median deployment will
-// have < 50). If a deployment grows past the no-virtualization
-// threshold we add cursor pagination as a follow-up — same shape as
-// `loops.list` (started_at-DESC keyset).
+// Wire shape — see `ScheduleListRow` / `ScheduleAddResult` in
+// `src/server/dto.ts` for the curated column sets. No `cursor`
+// pagination this iter: schedules are finite (humans manage them by
+// hand; the median deployment will have < 50). If a deployment grows
+// past the no-virtualization threshold we add cursor pagination as a
+// follow-up — same shape as `loops.list` (started_at-DESC keyset).
 //
-// Read-only — no MCP, no audit (queries are not audited per Phase 2
-// scope decision). The page polls every N seconds for live updates.
+// Read paths are read-only (no MCP, no audit — queries are not
+// audited per Phase 2 scope decision). The mutation paths (T6 + T7)
+// route through daemon MCP tools per Phase 3 INDEX invariant.
 
+import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { desc, eq } from "drizzle-orm";
 
 import { publicProcedure, router } from "../trpc";
 import { getDb } from "../db";
 import { schedules } from "../../db/schema";
-import type { ScheduleListPage, ScheduleListRow } from "../dto";
+import { appendAudit } from "../audit";
+import { auditFailureCode, mapMcpErrorToTrpc } from "../mcp/errors";
+import type {
+  ScheduleAddResult,
+  ScheduleListPage,
+  ScheduleListRow,
+} from "../dto";
 
 const ListInput = z.object({
   agent: z.string().min(1).optional(),
@@ -86,6 +93,63 @@ function rowToDto(row: {
   };
 }
 
+// P3-T6 — `schedules.add` input. Mirrors the daemon `bridge_schedule_add`
+// MCP tool surface (see `claude-bridge/src/mcp/tools.ts:273-287`).
+//
+// `intervalMinutes` is the only cadence shape the daemon currently
+// accepts; the cron picker converts cron expressions → interval
+// client-side before submit, and the dashboard records the cron
+// expression as audit metadata (the daemon ignores the field). Cap is
+// 30 days (43_200 min) — well above any reasonable schedule cadence;
+// guards against a stray "every year" entry overflowing scheduler math.
+//
+// `prompt` 32_000-char cap matches `tasks.dispatch.prompt` (Phase 2 T01)
+// and `loops.start.goal` (P3-T3) — well above any human prompt and
+// below stdio framing concerns. The prompt text is forwarded to the
+// daemon but **never** echoed into `audit_log.payload_json` (privacy
+// precedent §c). Audit records `hasPrompt: true` instead.
+const AddInput = z.object({
+  name: z.string().min(1).max(128).optional(),
+  agentName: z.string().min(1).max(128),
+  prompt: z.string().min(1).max(32_000),
+  intervalMinutes: z.number().int().min(1).max(43_200),
+  cronExpr: z.string().min(1).max(256).optional(),
+  channelChatId: z.string().min(1).max(128).optional(),
+});
+
+const SCHEDULE_ADD_TIMEOUT_MS = 15_000;
+
+interface BridgeScheduleAddResult {
+  id?: unknown;
+  content?: unknown;
+}
+
+// Daemon's `bridge_schedule_add` returns the MCP `text()` envelope —
+// `{ content: [{ type: "text", text: "Schedule #42 created" }] }`. The
+// in-process tests inject `{ id: 42 }` directly. Accept either; return
+// null if neither shape yields a valid id so the procedure can audit
+// `malformed_response` cleanly.
+function extractScheduleId(value: unknown): number | null {
+  if (value === null || typeof value !== "object") return null;
+  const v = value as BridgeScheduleAddResult;
+  if (typeof v.id === "number" && Number.isInteger(v.id) && v.id > 0) {
+    return v.id;
+  }
+  if (Array.isArray(v.content)) {
+    for (const part of v.content) {
+      if (part === null || typeof part !== "object") continue;
+      const p = part as { type?: unknown; text?: unknown };
+      if (p.type !== "text" || typeof p.text !== "string") continue;
+      const m = p.text.match(/Schedule\s+#(\d+)\s+created/i);
+      if (m && m[1]) {
+        const n = Number(m[1]);
+        if (Number.isInteger(n) && n > 0) return n;
+      }
+    }
+  }
+  return null;
+}
+
 export const schedulesRouter = router({
   // P3-T5 — list schedules with optional `agent` filter. Ordering: by
   // `nextRunAt` ASC NULLS LAST so the row most likely to fire next
@@ -132,5 +196,128 @@ export const schedulesRouter = router({
         return 0;
       });
       return { items: [...withNext, ...withoutNext] };
+    }),
+
+  // P3-T6 — create a recurring schedule via the daemon's
+  // `bridge_schedule_add` MCP tool. Same shape as Phase 2 T01
+  // `tasks.dispatch` and P3-T3 `loops.start`: CSRF + rate-limit guards
+  // run at the route handler; this procedure handles the audit row +
+  // error mapping. We never insert into the `schedules` table directly
+  // — the daemon owns schedule lifecycle.
+  //
+  // Audit shape (privacy precedent §c — prompt text NEVER echoed):
+  //   success → action="schedule.add", resource_id=String(id),
+  //             payload={ agentName, intervalMinutes, hasPrompt:true,
+  //                       name?, cronExpr?, hasChannelChatId? }
+  //   failure → action="schedule.add.error", resource_id=null,
+  //             payload={ agentName, intervalMinutes, code,
+  //                       name?, cronExpr? }
+  //
+  // The `prompt` text is `bridge_schedule_add`'s primary input — the
+  // daemon writes it to `schedules.prompt` so the audit row stays a
+  // minimal index, not a duplicate. Same rule we apply to
+  // `tasks.dispatch.prompt` and `loops.start.goal`.
+  //
+  // `cronExpr` IS recorded in audit (short label, not opaque) so the
+  // forensic trail captures the user's *intent* even though the daemon
+  // currently only stores `intervalMinutes`. When daemon-side cron
+  // support lands (filed against `claude-bridge`), no audit-shape
+  // change is needed.
+  add: publicProcedure
+    .input(AddInput)
+    .mutation(async ({ input, ctx }): Promise<ScheduleAddResult> => {
+      if (!ctx.mcp) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "MCP client not configured on tRPC context",
+        });
+      }
+
+      const params: {
+        agent_name: string;
+        prompt: string;
+        interval_minutes: number;
+        name?: string;
+        chat_id?: string;
+        user_id?: string;
+      } = {
+        agent_name: input.agentName,
+        prompt: input.prompt,
+        interval_minutes: input.intervalMinutes,
+      };
+      if (input.name !== undefined) params.name = input.name;
+      if (input.channelChatId !== undefined) params.chat_id = input.channelChatId;
+      if (ctx.userId !== undefined && ctx.userId !== null) params.user_id = ctx.userId;
+
+      const auditBase = {
+        resourceType: "schedule" as const,
+        userId: ctx.userId ?? null,
+        req: ctx.req,
+      };
+
+      // Audit failure-payload base — `prompt` is intentionally absent;
+      // the dialog forwards it to the daemon but the audit only
+      // records the metadata fields the user can reasonably want to
+      // forensically replay later. `hasPrompt:true` is the privacy
+      // sentinel that says "yes the daemon got a prompt value".
+      const failurePayloadBase: Record<string, unknown> = {
+        agentName: input.agentName,
+        intervalMinutes: input.intervalMinutes,
+      };
+      if (input.name !== undefined) failurePayloadBase.name = input.name;
+      if (input.cronExpr !== undefined) failurePayloadBase.cronExpr = input.cronExpr;
+
+      let result: unknown;
+      try {
+        result = await ctx.mcp.call("bridge_schedule_add", params, {
+          timeoutMs: SCHEDULE_ADD_TIMEOUT_MS,
+        });
+      } catch (err) {
+        appendAudit({
+          ...auditBase,
+          action: "schedule.add.error",
+          resourceId: null,
+          payload: {
+            ...failurePayloadBase,
+            code: auditFailureCode(err),
+          },
+        });
+        throw mapMcpErrorToTrpc(err);
+      }
+
+      const id = extractScheduleId(result);
+      if (id === null) {
+        appendAudit({
+          ...auditBase,
+          action: "schedule.add.error",
+          resourceId: null,
+          payload: {
+            ...failurePayloadBase,
+            code: "malformed_response",
+          },
+        });
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "daemon returned malformed schedule add response",
+        });
+      }
+
+      const successPayload: Record<string, unknown> = {
+        agentName: input.agentName,
+        intervalMinutes: input.intervalMinutes,
+        hasPrompt: true,
+      };
+      if (input.name !== undefined) successPayload.name = input.name;
+      if (input.cronExpr !== undefined) successPayload.cronExpr = input.cronExpr;
+      if (input.channelChatId !== undefined) successPayload.hasChannelChatId = true;
+
+      appendAudit({
+        ...auditBase,
+        action: "schedule.add",
+        resourceId: String(id),
+        payload: successPayload,
+      });
+
+      return { id };
     }),
 });

@@ -435,3 +435,14 @@ export interface ScheduleListRow {
 export interface ScheduleListPage {
   items: ScheduleListRow[];
 }
+
+// P3-T6 — wire shape returned by `schedules.add`. The daemon's
+// `bridge_schedule_add` MCP tool returns a text response of the form
+// "Schedule #<id> created" (or a structured `{ id }` object via the
+// test-side fake); the procedure parses both shapes and normalizes to
+// the camelCase `id` before crossing the tRPC boundary so the dialog
+// only ever sees one casing convention. Mirrors `LoopStartResult` from
+// P3-T3 + `DispatchResult` from Phase 2 T01.
+export interface ScheduleAddResult {
+  id: number;
+}
