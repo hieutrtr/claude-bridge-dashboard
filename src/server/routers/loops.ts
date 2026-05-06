@@ -32,12 +32,14 @@ import { and, desc, eq, lt } from "drizzle-orm";
 
 import { publicProcedure, router } from "../trpc";
 import { getDb } from "../db";
-import { loops } from "../../db/schema";
+import { loops, loopIterations } from "../../db/schema";
 import { appendAudit } from "../audit";
 import { McpPoolError } from "../mcp/pool";
 import { auditFailureCode, mapMcpErrorToTrpc } from "../mcp/errors";
 import type {
   LoopApproveResult,
+  LoopDetail,
+  LoopIterationRow,
   LoopListPage,
   LoopRejectResult,
 } from "../dto";
@@ -73,6 +75,59 @@ const LIST_DTO_SELECTION = {
   startedAt: loops.startedAt,
   finishedAt: loops.finishedAt,
   finishReason: loops.finishReason,
+} as const;
+
+// P3-T2 — `loops.get` input. Single loop_id; the procedure returns
+// `null` for unknown ids so the page can call `notFound()` rather
+// than catching a TRPCError. Mirrors `tasks.get` (Phase 1 T06).
+const GetInput = z.object({
+  loopId: z.string().min(1).max(128),
+});
+
+// Cap on iterations returned by `loops.get`. Most loops never come
+// near this — the daemon's `max_iterations` defaults to 10 and we've
+// never seen one above 50 in the wild. The cap is the safety net for
+// the rare runaway. Mirrors the `clipUtf8` cap in `tasks.get`: we
+// keep the page renderable rather than letting a single huge row
+// blow the FCP budget.
+const LOOP_ITERATIONS_LIMIT = 100;
+
+const ITER_DTO_SELECTION = {
+  id: loopIterations.id,
+  iterationNum: loopIterations.iterationNum,
+  taskId: loopIterations.taskId,
+  prompt: loopIterations.prompt,
+  resultSummary: loopIterations.resultSummary,
+  doneCheckPassed: loopIterations.doneCheckPassed,
+  costUsd: loopIterations.costUsd,
+  startedAt: loopIterations.startedAt,
+  finishedAt: loopIterations.finishedAt,
+  status: loopIterations.status,
+} as const;
+
+const DETAIL_DTO_SELECTION = {
+  loopId: loops.loopId,
+  agent: loops.agent,
+  project: loops.project,
+  goal: loops.goal,
+  doneWhen: loops.doneWhen,
+  loopType: loops.loopType,
+  status: loops.status,
+  maxIterations: loops.maxIterations,
+  currentIteration: loops.currentIteration,
+  totalCostUsd: loops.totalCostUsd,
+  maxCostUsd: loops.maxCostUsd,
+  pendingApproval: loops.pendingApproval,
+  startedAt: loops.startedAt,
+  finishedAt: loops.finishedAt,
+  finishReason: loops.finishReason,
+  currentTaskId: loops.currentTaskId,
+  channel: loops.channel,
+  channelChatId: loops.channelChatId,
+  planEnabled: loops.planEnabled,
+  passThreshold: loops.passThreshold,
+  consecutivePasses: loops.consecutivePasses,
+  consecutiveFailures: loops.consecutiveFailures,
 } as const;
 
 const ApproveInput = z.object({
@@ -151,6 +206,57 @@ export const loopsRouter = router({
           ? (items[items.length - 1]!.startedAt ?? null)
           : null;
       return { items, nextCursor };
+    }),
+
+  // P3-T2 — fetch one loop + its iteration history. Returns `null`
+  // for unknown loop_id so the page can `notFound()` cleanly. The
+  // iteration list is the most-recent `LOOP_ITERATIONS_LIMIT` rows
+  // returned in ascending `iteration_num` order so the timeline +
+  // sparkline read left-to-right naturally.
+  //
+  // Read-only — no MCP, no audit (queries are not audited per Phase
+  // 2 scope decision). The detail page polls every 2s for live
+  // updates per INDEX caveat (multiplexed `/api/stream` is filed
+  // against Phase 4).
+  get: publicProcedure
+    .input(GetInput)
+    .query(({ input }): LoopDetail | null => {
+      const db = getDb();
+      const row = db
+        .select(DETAIL_DTO_SELECTION)
+        .from(loops)
+        .where(eq(loops.loopId, input.loopId))
+        .limit(1)
+        .all()[0];
+      if (!row) return null;
+
+      const totalIterations = (
+        db
+          .select({ id: loopIterations.id })
+          .from(loopIterations)
+          .where(eq(loopIterations.loopId, input.loopId))
+          .all() as Array<{ id: number }>
+      ).length;
+
+      // Pull the most-recent N rows DESC (so we never load more
+      // than the cap into memory), then reverse client-side to
+      // present an ASC timeline. SQLite doesn't have a "tail" so
+      // this is the standard 2-step pattern.
+      const recentDesc = db
+        .select(ITER_DTO_SELECTION)
+        .from(loopIterations)
+        .where(eq(loopIterations.loopId, input.loopId))
+        .orderBy(desc(loopIterations.iterationNum))
+        .limit(LOOP_ITERATIONS_LIMIT)
+        .all();
+      const iterations: LoopIterationRow[] = recentDesc.slice().reverse();
+
+      return {
+        ...row,
+        iterations,
+        iterationsTruncated: totalIterations > LOOP_ITERATIONS_LIMIT,
+        totalIterations,
+      };
     }),
 
   // P2-T06 — approve a loop sitting in `pending_approval=true`.

@@ -60,6 +60,19 @@ const SCHEMA_DDL = `
     pass_threshold INTEGER NOT NULL DEFAULT 1,
     consecutive_passes INTEGER NOT NULL DEFAULT 0
   );
+  CREATE TABLE loop_iterations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    loop_id TEXT NOT NULL,
+    iteration_num INTEGER NOT NULL,
+    task_id TEXT,
+    prompt TEXT,
+    result_summary TEXT,
+    done_check_passed INTEGER NOT NULL DEFAULT 0,
+    cost_usd REAL NOT NULL DEFAULT 0,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    status TEXT NOT NULL DEFAULT 'running'
+  );
 `;
 
 interface AuditRow {
@@ -947,6 +960,201 @@ describe("loops.list — input validation", () => {
     let caught: TRPCError | null = null;
     try {
       await caller.loops.list({ agent: "" });
+    } catch (e) {
+      caught = e as TRPCError;
+    }
+    expect(caught!.code).toBe("BAD_REQUEST");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// P3-T2 — loops.get (read-only query, no MCP)
+// ─────────────────────────────────────────────────────────────────────
+
+interface SeedIterOpts {
+  loopId: string;
+  iterationNum: number;
+  taskId?: string | null;
+  prompt?: string | null;
+  resultSummary?: string | null;
+  doneCheckPassed?: boolean;
+  costUsd?: number;
+  startedAt?: string;
+  finishedAt?: string | null;
+  status?: string;
+}
+
+function seedIter(db: Database, opts: SeedIterOpts): void {
+  db.prepare(
+    `INSERT INTO loop_iterations
+       (loop_id, iteration_num, task_id, prompt, result_summary,
+        done_check_passed, cost_usd, started_at, finished_at, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    opts.loopId,
+    opts.iterationNum,
+    opts.taskId ?? null,
+    opts.prompt ?? null,
+    opts.resultSummary ?? null,
+    opts.doneCheckPassed ? 1 : 0,
+    opts.costUsd ?? 0,
+    opts.startedAt ??
+      new Date(2026, 4, 6, 0, 0, opts.iterationNum).toISOString(),
+    opts.finishedAt ?? null,
+    opts.status ?? "running",
+  );
+}
+
+describe("loops.get — unknown id", () => {
+  it("returns null for an unknown loop_id", async () => {
+    const caller = appRouter.createCaller({});
+    const out = await caller.loops.get({ loopId: "ghost" });
+    expect(out).toBeNull();
+  });
+});
+
+describe("loops.get — happy path", () => {
+  it("projects all detail fields plus iterations ASC by iteration_num", async () => {
+    seedListLoop(db, {
+      loopId: "loop-detail",
+      agent: "alpha",
+      status: "running",
+      currentIteration: 3,
+      maxIterations: 10,
+      totalCostUsd: 0.0345,
+      maxCostUsd: 5.0,
+      pendingApproval: false,
+      startedAt: "2026-05-06T00:00:00.000Z",
+      goal: "ship the feature",
+    });
+    // Insert iterations out of order.
+    seedIter(db, {
+      loopId: "loop-detail",
+      iterationNum: 2,
+      taskId: "task-2",
+      prompt: "iter 2 prompt",
+      resultSummary: "iter 2 result",
+      costUsd: 0.012,
+      doneCheckPassed: false,
+      status: "done",
+      startedAt: "2026-05-06T00:00:02.000Z",
+      finishedAt: "2026-05-06T00:00:05.000Z",
+    });
+    seedIter(db, {
+      loopId: "loop-detail",
+      iterationNum: 1,
+      taskId: "task-1",
+      prompt: "iter 1 prompt",
+      resultSummary: "iter 1 result",
+      costUsd: 0.0095,
+      doneCheckPassed: false,
+      status: "done",
+      startedAt: "2026-05-06T00:00:01.000Z",
+      finishedAt: "2026-05-06T00:00:02.000Z",
+    });
+    seedIter(db, {
+      loopId: "loop-detail",
+      iterationNum: 3,
+      taskId: "task-3",
+      prompt: "iter 3 prompt",
+      resultSummary: null,
+      costUsd: 0.013,
+      doneCheckPassed: true,
+      status: "running",
+      startedAt: "2026-05-06T00:00:05.000Z",
+      finishedAt: null,
+    });
+
+    const caller = appRouter.createCaller({});
+    const out = await caller.loops.get({ loopId: "loop-detail" });
+    expect(out).not.toBeNull();
+    expect(out!.loopId).toBe("loop-detail");
+    expect(out!.agent).toBe("alpha");
+    expect(out!.goal).toBe("ship the feature");
+    expect(out!.maxIterations).toBe(10);
+    expect(out!.totalCostUsd).toBeCloseTo(0.0345, 6);
+    expect(out!.maxCostUsd).toBe(5.0);
+    expect(out!.pendingApproval).toBe(false);
+
+    // Iterations are ordered ascending.
+    expect(out!.iterations.map((i) => i.iterationNum)).toEqual([1, 2, 3]);
+    expect(out!.iterations[2]!.doneCheckPassed).toBe(true);
+    expect(out!.iterations[2]!.taskId).toBe("task-3");
+    expect(out!.iterations[1]!.resultSummary).toBe("iter 2 result");
+    expect(out!.iterationsTruncated).toBe(false);
+    expect(out!.totalIterations).toBe(3);
+  });
+
+  it("returns empty iterations array when none recorded yet", async () => {
+    seedListLoop(db, { loopId: "loop-fresh", agent: "alpha" });
+    const caller = appRouter.createCaller({});
+    const out = await caller.loops.get({ loopId: "loop-fresh" });
+    expect(out).not.toBeNull();
+    expect(out!.iterations).toEqual([]);
+    expect(out!.iterationsTruncated).toBe(false);
+    expect(out!.totalIterations).toBe(0);
+  });
+
+  it("returns nullable columns as null (maxCostUsd, finishedAt, currentTaskId)", async () => {
+    seedListLoop(db, {
+      loopId: "loop-nullable",
+      maxCostUsd: null,
+      finishedAt: null,
+      finishReason: null,
+    });
+    const caller = appRouter.createCaller({});
+    const out = await caller.loops.get({ loopId: "loop-nullable" });
+    expect(out!.maxCostUsd).toBeNull();
+    expect(out!.finishedAt).toBeNull();
+    expect(out!.finishReason).toBeNull();
+    expect(out!.currentTaskId).toBeNull();
+  });
+});
+
+describe("loops.get — iteration cap", () => {
+  it("clips to the most recent 100 when totalIterations > 100", async () => {
+    seedListLoop(db, {
+      loopId: "loop-big",
+      maxIterations: 200,
+      currentIteration: 150,
+    });
+    for (let i = 1; i <= 150; i++) {
+      seedIter(db, {
+        loopId: "loop-big",
+        iterationNum: i,
+        costUsd: 0.001,
+        startedAt: new Date(2026, 4, 6, 0, 0, i).toISOString(),
+        status: "done",
+      });
+    }
+    const caller = appRouter.createCaller({});
+    const out = await caller.loops.get({ loopId: "loop-big" });
+    expect(out!.iterations.length).toBe(100);
+    // The 100 most-recent rows, ASC: iter 51..150.
+    expect(out!.iterations[0]!.iterationNum).toBe(51);
+    expect(out!.iterations[99]!.iterationNum).toBe(150);
+    expect(out!.iterationsTruncated).toBe(true);
+    expect(out!.totalIterations).toBe(150);
+  });
+});
+
+describe("loops.get — input validation", () => {
+  it("rejects empty loopId", async () => {
+    const caller = appRouter.createCaller({});
+    let caught: TRPCError | null = null;
+    try {
+      await caller.loops.get({ loopId: "" });
+    } catch (e) {
+      caught = e as TRPCError;
+    }
+    expect(caught!.code).toBe("BAD_REQUEST");
+  });
+
+  it("rejects loopId longer than 128 chars", async () => {
+    const caller = appRouter.createCaller({});
+    let caught: TRPCError | null = null;
+    try {
+      await caller.loops.get({ loopId: "x".repeat(129) });
     } catch (e) {
       caught = e as TRPCError;
     }

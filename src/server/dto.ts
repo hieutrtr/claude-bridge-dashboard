@@ -279,6 +279,72 @@ export interface LoopListPage {
   nextCursor: string | null;
 }
 
+// P3-T2 — wire shape returned by `loops.get`. Adds the columns the
+// detail page renders that `LoopListRow` deliberately omits:
+//
+// - `goal` — the loop's natural-language objective. Listed
+//   read-only in the detail header. Privacy precedent (audit log
+//   never echoes goal text) holds for *audit*; the detail page
+//   explicitly shows it because the user navigated to it.
+// - `doneWhen` — the evaluator that decides termination
+//   (`command:`, `file_exists:`, `llm_judge:`, `manual:` etc.).
+// - `loopType`, budget caps, plan flag, pass-threshold counters —
+//   read-only metadata for the sidebar.
+// - `iterations` — last N rows from `loop_iterations` ordered by
+//   `iteration_num` ASC. The detail page renders an oldest-first
+//   timeline so the sparkline reads left-to-right naturally.
+//
+// Iterations cap defaults to 100 (well above the median loop's
+// `max_iterations=10` budget; loops above this cap render the
+// most-recent 100 with a banner). The `prompt` and
+// `resultSummary` columns ARE on the wire — the user already has
+// access to the parent loop, so per-iter detail follows the same
+// "user navigated here" rule that justifies `goal` above.
+export interface LoopIterationRow {
+  id: number;
+  iterationNum: number;
+  taskId: string | null;
+  prompt: string | null;
+  resultSummary: string | null;
+  doneCheckPassed: boolean;
+  costUsd: number;
+  startedAt: string;
+  finishedAt: string | null;
+  status: string;
+}
+
+export interface LoopDetail {
+  loopId: string;
+  agent: string;
+  project: string;
+  goal: string;
+  doneWhen: string;
+  loopType: string;
+  status: string;
+  maxIterations: number;
+  currentIteration: number;
+  totalCostUsd: number;
+  maxCostUsd: number | null;
+  pendingApproval: boolean;
+  startedAt: string;
+  finishedAt: string | null;
+  finishReason: string | null;
+  currentTaskId: string | null;
+  channel: string | null;
+  channelChatId: string | null;
+  planEnabled: boolean;
+  passThreshold: number;
+  consecutivePasses: number;
+  consecutiveFailures: number;
+  iterations: LoopIterationRow[];
+  // `iterations` is capped at `LOOP_ITERATIONS_LIMIT`; when the loop
+  // has more than that, the wire returns the *most recent* 100 in
+  // ascending order (oldest of the 100 first). The page banners the
+  // truncation so the user knows older iters were trimmed.
+  iterationsTruncated: boolean;
+  totalIterations: number;
+}
+
 // P2-T05 — wire shape returned by `audit.list`. Mirrors the
 // dashboard-owned `audit_log` columns (T04) plus a parsed `payload`.
 //
