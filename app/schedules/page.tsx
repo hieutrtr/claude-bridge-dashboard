@@ -14,6 +14,7 @@ import {
   ScheduleCreateDialog,
   ScheduleCreateTrigger,
 } from "@/src/components/schedule-create-dialog";
+import { ScheduleRunsDrawer } from "@/src/components/schedule-runs-drawer";
 
 export const dynamic = "force-dynamic";
 
@@ -57,6 +58,7 @@ export default async function SchedulesPage({ searchParams }: PageProps) {
       <ScheduleTable items={page.items} isFiltered={isFiltered} />
 
       <ScheduleCreateDialog />
+      <ScheduleRunsDrawer />
     </div>
   );
 }

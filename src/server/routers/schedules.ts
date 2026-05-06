@@ -16,11 +16,11 @@
 
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 
 import { publicProcedure, router } from "../trpc";
 import { getDb } from "../db";
-import { schedules } from "../../db/schema";
+import { agents, schedules, tasks } from "../../db/schema";
 import { appendAudit } from "../audit";
 import { auditFailureCode, mapMcpErrorToTrpc } from "../mcp/errors";
 import type {
@@ -28,6 +28,8 @@ import type {
   ScheduleListPage,
   ScheduleListRow,
   ScheduleMutationResult,
+  ScheduleRunRow,
+  ScheduleRunsPage,
 } from "../dto";
 
 const ListInput = z.object({
@@ -192,6 +194,60 @@ function lookupSchedule(id: number): ScheduleLookupRow | null {
     id: row.id,
     name: row.name,
     agentName: row.agentName,
+  };
+}
+
+// P3-T8 — `schedules.runs` input. Read-only join across schedules +
+// agents + tasks. The daemon does not carry `schedule_id` on tasks
+// (see `claude-bridge/src/orchestration/scheduler.ts:80-88`), so the
+// link is heuristic: `tasks.session_id == agents.session_id` for the
+// schedule's `agent_name` AND `tasks.prompt == schedules.prompt` AND
+// `tasks.channel == schedules.channel`. Documented in T08-review.md.
+const RunsInput = z.object({
+  id: z.number().int().positive(),
+  limit: z.number().int().min(1).max(100).default(30),
+});
+
+const SCHEDULE_RUN_DTO_SELECTION = {
+  id: tasks.id,
+  status: tasks.status,
+  costUsd: tasks.costUsd,
+  durationMs: tasks.durationMs,
+  channel: tasks.channel,
+  createdAt: tasks.createdAt,
+  completedAt: tasks.completedAt,
+} as const;
+
+interface ScheduleRunsLookupRow {
+  id: number;
+  name: string;
+  agentName: string;
+  prompt: string;
+  channel: string | null;
+}
+
+function lookupScheduleForRuns(id: number): ScheduleRunsLookupRow | null {
+  const db = getDb();
+  const rows = db
+    .select({
+      id: schedules.id,
+      name: schedules.name,
+      agentName: schedules.agentName,
+      prompt: schedules.prompt,
+      channel: schedules.channel,
+    })
+    .from(schedules)
+    .where(eq(schedules.id, id))
+    .limit(1)
+    .all();
+  if (rows.length === 0) return null;
+  const row = rows[0]!;
+  return {
+    id: row.id,
+    name: row.name,
+    agentName: row.agentName,
+    prompt: row.prompt,
+    channel: row.channel,
   };
 }
 
@@ -468,4 +524,87 @@ export const schedulesRouter = router({
   pause: makeScheduleActionProcedure("pause"),
   resume: makeScheduleActionProcedure("resume"),
   remove: makeScheduleActionProcedure("remove"),
+
+  // P3-T8 — recent runs for a schedule. Heuristic join: the daemon
+  // does NOT carry `schedule_id` on tasks (see scheduler.ts:80-88),
+  // so we filter on the three columns it copies from the schedule
+  // verbatim at dispatch time: session_id (resolved from the agent),
+  // prompt, channel. A manually dispatched task with the same exact
+  // prompt + agent + channel would surface here too — known
+  // limitation, documented in T08-review.md. Collapses to a foreign-
+  // key lookup if/when daemon gains `tasks.schedule_id` (Phase 4
+  // entry note against `claude-bridge`).
+  //
+  // Read-only — no audit row (Phase 2 audit-scope decision: queries
+  // are not audited). Same shape as `loops.list` / `tasks.list`.
+  runs: publicProcedure
+    .input(RunsInput)
+    .query(({ input }): ScheduleRunsPage => {
+      const schedule = lookupScheduleForRuns(input.id);
+      if (schedule === null) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "schedule not found",
+        });
+      }
+
+      const db = getDb();
+
+      // Resolve the agent's session_id. An "orphan" schedule (agent
+      // row deleted out from under it) yields zero rows here — we
+      // return an empty `items` array rather than 404 so the drawer
+      // can render a clean "no runs yet" state with the agent name
+      // still in the header.
+      const agentRows = db
+        .select({ sessionId: agents.sessionId })
+        .from(agents)
+        .where(eq(agents.name, schedule.agentName))
+        .limit(1)
+        .all();
+      if (agentRows.length === 0) {
+        return {
+          scheduleId: schedule.id,
+          scheduleName: schedule.name,
+          agentName: schedule.agentName,
+          items: [],
+        };
+      }
+      const sessionId = agentRows[0]!.sessionId;
+
+      // Heuristic filter — see procedure header. `channel` is
+      // nullable on the schedules schema; treat NULL as "cli"
+      // (the daemon's default) so legacy rows match the dispatched
+      // tasks the daemon would have written under the same default.
+      const channel = schedule.channel ?? "cli";
+      const taskRows = db
+        .select(SCHEDULE_RUN_DTO_SELECTION)
+        .from(tasks)
+        .where(
+          and(
+            eq(tasks.sessionId, sessionId),
+            eq(tasks.prompt, schedule.prompt),
+            eq(tasks.channel, channel),
+          ),
+        )
+        .orderBy(desc(tasks.id))
+        .limit(input.limit)
+        .all();
+
+      const items: ScheduleRunRow[] = taskRows.map((row) => ({
+        id: row.id,
+        status: row.status,
+        costUsd: row.costUsd,
+        durationMs: row.durationMs,
+        channel: row.channel,
+        createdAt: row.createdAt,
+        completedAt: row.completedAt,
+      }));
+
+      return {
+        scheduleId: schedule.id,
+        scheduleName: schedule.name,
+        agentName: schedule.agentName,
+        items,
+      };
+    }),
 });

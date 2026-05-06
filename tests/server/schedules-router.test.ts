@@ -27,6 +27,11 @@ import {
 // scheduler maintains (see `claude-bridge` schema). We only pre-populate
 // the columns the dashboard reads — the rest carry the daemon's
 // CREATE TABLE defaults.
+//
+// `agents` + `tasks` are seeded for the P3-T8 `schedules.runs` tests —
+// the run-history join filters on `tasks.session_id = agents.session_id`
+// + `tasks.prompt = schedules.prompt` + `tasks.channel =
+// schedules.channel`. Other tests in this file don't touch them.
 const SCHEMA_DDL = `
   CREATE TABLE schedules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,6 +52,45 @@ const SCHEMA_DDL = `
     user_id TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE agents (
+    name TEXT NOT NULL,
+    project_dir TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    agent_file TEXT NOT NULL,
+    purpose TEXT,
+    state TEXT DEFAULT 'created',
+    created_at NUMERIC DEFAULT CURRENT_TIMESTAMP,
+    last_task_at NUMERIC,
+    total_tasks INTEGER DEFAULT 0,
+    model TEXT DEFAULT 'sonnet',
+    PRIMARY KEY (name, project_dir)
+  );
+  CREATE TABLE tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    status TEXT DEFAULT 'pending',
+    pid INTEGER,
+    result_file TEXT,
+    result_summary TEXT,
+    cost_usd REAL,
+    duration_ms INTEGER,
+    num_turns INTEGER,
+    exit_code INTEGER,
+    error_message TEXT,
+    created_at NUMERIC DEFAULT CURRENT_TIMESTAMP,
+    started_at NUMERIC,
+    completed_at NUMERIC,
+    reported INTEGER DEFAULT 0,
+    position INTEGER,
+    model TEXT,
+    task_type TEXT DEFAULT 'standard',
+    parent_task_id INTEGER,
+    channel TEXT DEFAULT 'cli',
+    channel_chat_id TEXT,
+    channel_message_id TEXT,
+    user_id TEXT
   );
 `;
 
@@ -980,4 +1024,296 @@ describe("schedules.pause / resume / remove — MCP context missing", () => {
       expect(rows(db).length).toBe(0);
     });
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// P3-T8 — schedules.runs (read-only join across schedules + agents +
+// tasks). No MCP, no audit row.
+// ─────────────────────────────────────────────────────────────────────
+//
+// Heuristic — the daemon does NOT carry `schedule_id` on the task row
+// (see `claude-bridge/src/orchestration/scheduler.ts:80-88`). We
+// resolve the schedule's agent → session_id, then filter tasks by
+// `(session_id, prompt, channel)` — the three columns the scheduler
+// copies verbatim from the schedule at dispatch time.
+//
+// Edge cases under test:
+//   * unknown schedule id → NOT_FOUND
+//   * orphan schedule (agent_name has no row in agents) → empty
+//     items + scheduleName + agentName still echoed
+//   * tasks with the same prompt on a *different* agent are NOT
+//     returned (session_id discriminator).
+//   * tasks with a different prompt on the same agent are NOT
+//     returned (prompt discriminator).
+//   * tasks with the same prompt + agent but a different channel
+//     are NOT returned (channel discriminator).
+//   * default limit 30; clamped to [1, 100]; ordered by id DESC.
+
+interface SeedAgentOpts {
+  name?: string;
+  projectDir?: string;
+  sessionId?: string;
+}
+
+function seedAgent(db: Database, opts: SeedAgentOpts = {}): void {
+  db.prepare(
+    `INSERT INTO agents (name, project_dir, session_id, agent_file)
+     VALUES (?, ?, ?, ?)`,
+  ).run(
+    opts.name ?? "alpha",
+    opts.projectDir ?? "/tmp/alpha",
+    opts.sessionId ?? "sess-alpha",
+    `/tmp/${opts.name ?? "alpha"}.md`,
+  );
+}
+
+interface SeedTaskOpts {
+  sessionId: string;
+  prompt?: string;
+  status?: string;
+  costUsd?: number | null;
+  durationMs?: number | null;
+  channel?: string;
+  createdAt?: string;
+  completedAt?: string | null;
+}
+
+function seedTask(db: Database, opts: SeedTaskOpts): number {
+  const info = db
+    .prepare(
+      `INSERT INTO tasks
+         (session_id, prompt, status, cost_usd, duration_ms, channel,
+          created_at, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      opts.sessionId,
+      opts.prompt ?? "run the test suite",
+      opts.status ?? "done",
+      opts.costUsd ?? null,
+      opts.durationMs ?? null,
+      opts.channel ?? "cli",
+      opts.createdAt ?? "2026-05-06T00:00:00.000Z",
+      opts.completedAt ?? null,
+    );
+  return Number(info.lastInsertRowid);
+}
+
+describe("schedules.runs — happy path", () => {
+  it("returns up to N most-recent tasks matching the schedule's session+prompt+channel", async () => {
+    seedAgent(db, { name: "alpha", sessionId: "sess-alpha" });
+    const scheduleId = seedSchedule(db, {
+      name: "nightly-tests",
+      agentName: "alpha",
+      prompt: "run the full test suite",
+      channel: "cli",
+    });
+    // Three matching runs (ascending creation order in DB == ascending id).
+    const t1 = seedTask(db, {
+      sessionId: "sess-alpha",
+      prompt: "run the full test suite",
+      channel: "cli",
+      status: "done",
+      costUsd: 0.123,
+      durationMs: 1500,
+      createdAt: "2026-05-04T00:00:00.000Z",
+      completedAt: "2026-05-04T00:00:30.000Z",
+    });
+    const t2 = seedTask(db, {
+      sessionId: "sess-alpha",
+      prompt: "run the full test suite",
+      channel: "cli",
+      status: "failed",
+      costUsd: 0.05,
+      durationMs: 800,
+      createdAt: "2026-05-05T00:00:00.000Z",
+    });
+    const t3 = seedTask(db, {
+      sessionId: "sess-alpha",
+      prompt: "run the full test suite",
+      channel: "cli",
+      status: "done",
+      costUsd: 0.099,
+      durationMs: 1200,
+      createdAt: "2026-05-06T00:00:00.000Z",
+    });
+    // Different prompt → excluded.
+    seedTask(db, {
+      sessionId: "sess-alpha",
+      prompt: "ad-hoc dispatch",
+      channel: "cli",
+      status: "done",
+    });
+    // Different channel → excluded.
+    seedTask(db, {
+      sessionId: "sess-alpha",
+      prompt: "run the full test suite",
+      channel: "telegram",
+      status: "done",
+    });
+    // Different agent → excluded.
+    seedAgent(db, { name: "beta", projectDir: "/tmp/beta", sessionId: "sess-beta" });
+    seedTask(db, {
+      sessionId: "sess-beta",
+      prompt: "run the full test suite",
+      channel: "cli",
+      status: "done",
+    });
+
+    const caller = appRouter.createCaller({});
+    const out = await caller.schedules.runs({ id: scheduleId });
+    expect(out.scheduleId).toBe(scheduleId);
+    expect(out.scheduleName).toBe("nightly-tests");
+    expect(out.agentName).toBe("alpha");
+    // Order: id DESC (most recent first).
+    expect(out.items.map((r) => r.id)).toEqual([t3, t2, t1]);
+    expect(out.items[0]).toEqual({
+      id: t3,
+      status: "done",
+      costUsd: 0.099,
+      durationMs: 1200,
+      channel: "cli",
+      createdAt: "2026-05-06T00:00:00.000Z",
+      completedAt: null,
+    });
+  });
+
+  it("returns empty items when no tasks match", async () => {
+    seedAgent(db, { name: "alpha", sessionId: "sess-alpha" });
+    const id = seedSchedule(db, {
+      name: "fresh",
+      agentName: "alpha",
+      prompt: "x",
+      channel: "cli",
+    });
+    const caller = appRouter.createCaller({});
+    const out = await caller.schedules.runs({ id });
+    expect(out.scheduleId).toBe(id);
+    expect(out.scheduleName).toBe("fresh");
+    expect(out.agentName).toBe("alpha");
+    expect(out.items).toEqual([]);
+  });
+
+  it("returns empty items when agent row is missing (orphan schedule)", async () => {
+    const id = seedSchedule(db, {
+      name: "orphan",
+      agentName: "ghost",
+      prompt: "x",
+      channel: "cli",
+    });
+    const caller = appRouter.createCaller({});
+    const out = await caller.schedules.runs({ id });
+    expect(out.agentName).toBe("ghost");
+    expect(out.items).toEqual([]);
+  });
+
+  it("respects custom limit", async () => {
+    seedAgent(db, { name: "alpha", sessionId: "sess-alpha" });
+    const id = seedSchedule(db, {
+      name: "noisy",
+      agentName: "alpha",
+      prompt: "p",
+      channel: "cli",
+    });
+    for (let i = 0; i < 5; i++) {
+      seedTask(db, {
+        sessionId: "sess-alpha",
+        prompt: "p",
+        channel: "cli",
+        createdAt: `2026-05-0${i + 1}T00:00:00.000Z`,
+      });
+    }
+    const caller = appRouter.createCaller({});
+    const out = await caller.schedules.runs({ id, limit: 2 });
+    expect(out.items.length).toBe(2);
+  });
+
+  it("default limit is 30", async () => {
+    seedAgent(db, { name: "alpha", sessionId: "sess-alpha" });
+    const id = seedSchedule(db, {
+      name: "many",
+      agentName: "alpha",
+      prompt: "p",
+      channel: "cli",
+    });
+    for (let i = 0; i < 35; i++) {
+      seedTask(db, { sessionId: "sess-alpha", prompt: "p", channel: "cli" });
+    }
+    const caller = appRouter.createCaller({});
+    const out = await caller.schedules.runs({ id });
+    expect(out.items.length).toBe(30);
+  });
+
+  it("does NOT write an audit row (read-only query)", async () => {
+    seedAgent(db, { name: "alpha", sessionId: "sess-alpha" });
+    const id = seedSchedule(db, {
+      name: "audit-free",
+      agentName: "alpha",
+      prompt: "p",
+      channel: "cli",
+    });
+    const caller = appRouter.createCaller({});
+    await caller.schedules.runs({ id });
+    expect(rows(db).length).toBe(0);
+  });
+});
+
+describe("schedules.runs — input validation + unknown id", () => {
+  it("unknown id → NOT_FOUND", async () => {
+    const caller = appRouter.createCaller({});
+    let caught: TRPCError | null = null;
+    try {
+      await caller.schedules.runs({ id: 9999 });
+    } catch (e) {
+      caught = e as TRPCError;
+    }
+    expect(caught!.code).toBe("NOT_FOUND");
+  });
+
+  it("rejects non-positive id", async () => {
+    const caller = appRouter.createCaller({});
+    let caught: TRPCError | null = null;
+    try {
+      await caller.schedules.runs({ id: 0 });
+    } catch (e) {
+      caught = e as TRPCError;
+    }
+    expect(caught!.code).toBe("BAD_REQUEST");
+  });
+
+  it("rejects limit > 100", async () => {
+    seedAgent(db, { name: "alpha", sessionId: "sess-alpha" });
+    const id = seedSchedule(db, {
+      name: "x",
+      agentName: "alpha",
+      prompt: "p",
+      channel: "cli",
+    });
+    const caller = appRouter.createCaller({});
+    let caught: TRPCError | null = null;
+    try {
+      await caller.schedules.runs({ id, limit: 101 });
+    } catch (e) {
+      caught = e as TRPCError;
+    }
+    expect(caught!.code).toBe("BAD_REQUEST");
+  });
+
+  it("rejects limit < 1", async () => {
+    seedAgent(db, { name: "alpha", sessionId: "sess-alpha" });
+    const id = seedSchedule(db, {
+      name: "x",
+      agentName: "alpha",
+      prompt: "p",
+      channel: "cli",
+    });
+    const caller = appRouter.createCaller({});
+    let caught: TRPCError | null = null;
+    try {
+      await caller.schedules.runs({ id, limit: 0 });
+    } catch (e) {
+      caught = e as TRPCError;
+    }
+    expect(caught!.code).toBe("BAD_REQUEST");
+  });
 });

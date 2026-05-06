@@ -28,6 +28,7 @@ import { useRouter } from "next/navigation";
 
 import { Button } from "@/src/components/ui/button";
 import { DangerConfirm } from "@/src/components/danger-confirm";
+import { ScheduleRunsTrigger } from "@/src/components/schedule-runs-drawer";
 import {
   DispatchError,
   readCsrfTokenFromCookie,
@@ -75,6 +76,10 @@ export function ScheduleRowActionsView(props: ScheduleRowActionsViewProps) {
       data-testid="schedule-row-actions"
       className="flex items-center justify-end gap-1"
     >
+      <ScheduleRunsTrigger
+        scheduleId={props.scheduleId}
+        scheduleName={props.scheduleName}
+      />
       <Button
         type="button"
         size="sm"
