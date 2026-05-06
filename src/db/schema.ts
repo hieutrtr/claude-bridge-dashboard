@@ -167,6 +167,44 @@ export const loopIterations = sqliteTable("loop_iterations", {
 // generated diff but do NOT delete this block.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// P4-T01 — `users` table. Dashboard-owned. Created by migration
+// `0002_users.sql`. `id` is a UUID for magic-link-created rows or the
+// literal `"owner"` for the env-password fallback identity backfilled
+// on first use (see `src/server/routers/auth.ts`). `email_lower` is a
+// generated column used for case-insensitive uniqueness.
+export const users = sqliteTable("users", {
+	id: text().primaryKey(),
+	email: text().notNull(),
+	emailLower: text("email_lower"),
+	role: text().notNull().default("member"),
+	displayName: text("display_name"),
+	createdAt: integer("created_at").notNull(),
+	lastLoginAt: integer("last_login_at"),
+	revokedAt: integer("revoked_at"),
+},
+(table) => [
+	index("idx_users_email_lower").on(table.emailLower),
+	index("idx_users_revoked_at").on(table.revokedAt),
+]);
+
+// P4-T01 — `magic_links` table. Dashboard-owned. Created by migration
+// `0003_magic_links.sql`. The plaintext token is never stored — only
+// `token_hash` (SHA-256 of the random 32-byte URL-safe token).
+// `consumed_at` is the single-use guard.
+export const magicLinks = sqliteTable("magic_links", {
+	tokenHash: text("token_hash").primaryKey(),
+	email: text().notNull(),
+	emailLower: text("email_lower"),
+	createdAt: integer("created_at").notNull(),
+	expiresAt: integer("expires_at").notNull(),
+	consumedAt: integer("consumed_at"),
+	requestIpHash: text("request_ip_hash"),
+},
+(table) => [
+	index("idx_magic_links_expires_at").on(table.expiresAt),
+	index("idx_magic_links_email_lower").on(table.emailLower),
+]);
+
 export const auditLog = sqliteTable("audit_log", {
 	id: integer().primaryKey({ autoIncrement: true }),
 	userId: text("user_id"),

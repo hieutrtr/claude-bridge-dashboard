@@ -22,9 +22,9 @@ describe("constants", () => {
 });
 
 describe("signSession / verifySession", () => {
-  it("round-trips and yields the expected claims", async () => {
+  it("round-trips and yields the expected claims (default sub:owner)", async () => {
     const now = 1_700_000_000; // arbitrary fixed epoch second
-    const token = await signSession(SECRET, now);
+    const token = await signSession(SECRET, { now });
     const parts = token.split(".");
     expect(parts.length).toBe(3);
     for (const segment of parts) {
@@ -38,13 +38,22 @@ describe("signSession / verifySession", () => {
     expect(payload!.exp).toBe(now + SESSION_TTL_SECONDS);
   });
 
+  it("P4-T01: round-trips an arbitrary user-id sub", async () => {
+    const now = 1_700_000_000;
+    const sub = "11111111-2222-3333-4444-555555555555";
+    const token = await signSession(SECRET, { sub, now });
+    const payload = await verifySession(token, SECRET, now + 1);
+    expect(payload).not.toBeNull();
+    expect(payload!.sub).toBe(sub);
+  });
+
   it("rejects a token signed with a different secret", async () => {
-    const token = await signSession(SECRET, 1_700_000_000);
+    const token = await signSession(SECRET, { now: 1_700_000_000 });
     expect(await verifySession(token, "different-secret", 1_700_000_000)).toBeNull();
   });
 
   it("rejects a tampered payload", async () => {
-    const token = await signSession(SECRET, 1_700_000_000);
+    const token = await signSession(SECRET, { now: 1_700_000_000 });
     const [h, p, s] = token.split(".");
     // flip a single character in the payload segment
     const tamperedChar = p[0] === "A" ? "B" : "A";
@@ -60,15 +69,19 @@ describe("signSession / verifySession", () => {
 
   it("rejects an expired token", async () => {
     const iat = 1_700_000_000;
-    const token = await signSession(SECRET, iat);
+    const token = await signSession(SECRET, { now: iat });
     const past = iat + SESSION_TTL_SECONDS + 1;
     expect(await verifySession(token, SECRET, past)).toBeNull();
   });
 
   it("refuses to sign or verify when secret is empty", async () => {
-    await expect(signSession("", 1_700_000_000)).rejects.toThrow();
-    const token = await signSession(SECRET, 1_700_000_000);
+    await expect(signSession("", { now: 1_700_000_000 })).rejects.toThrow();
+    const token = await signSession(SECRET, { now: 1_700_000_000 });
     await expect(verifySession(token, "", 1_700_000_000)).rejects.toThrow();
+  });
+
+  it("refuses to sign with an empty sub", async () => {
+    await expect(signSession(SECRET, { sub: "", now: 1_700_000_000 })).rejects.toThrow();
   });
 });
 

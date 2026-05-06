@@ -9,6 +9,7 @@ import { router } from "../trpc";
 import { agentsRouter } from "./agents";
 import { analyticsRouter } from "./analytics";
 import { auditRouter } from "./audit";
+import { authRouter } from "./auth";
 import { loopsRouter } from "./loops";
 import { permissionsRouter } from "./permissions";
 import { schedulesRouter } from "./schedules";
@@ -18,6 +19,7 @@ export const appRouter = router({
   agents: agentsRouter,
   analytics: analyticsRouter,
   audit: auditRouter,
+  auth: authRouter,
   loops: loopsRouter,
   permissions: permissionsRouter,
   schedules: schedulesRouter,

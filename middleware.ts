@@ -3,7 +3,14 @@ import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE, SESSION_TTL_SECONDS, readAuthEnv, verifySession } from "@/src/lib/auth";
 import { CSRF_COOKIE, issueCsrfToken } from "@/src/lib/csrf";
 
-const PUBLIC_EXACT = new Set(["/login", "/api/auth/login", "/api/auth/logout"]);
+const PUBLIC_EXACT = new Set([
+  "/login",
+  "/api/auth/login",
+  "/api/auth/logout",
+  // P4-T01 — magic-link request POST + consume GET.
+  "/api/auth/magic-link/request",
+  "/api/auth/magic-link/consume",
+]);
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;

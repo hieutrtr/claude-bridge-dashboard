@@ -42,7 +42,8 @@
 >    ≥ 90 across `/`, `/agents`, `/tasks`, `/loops`, `/schedules`,
 >    `/cost`, `/audit`, `/users` (T07 acceptance).
 >
-> **Status:** Iter 1/16 — INDEX (this file) being committed.
+> **Status:** Iter 2/16 — T01 magic-link auth landed; iter 3 = T02 user
+> management page.
 
 ---
 
