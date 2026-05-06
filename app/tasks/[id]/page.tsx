@@ -16,6 +16,7 @@ import { MARKDOWN_REHYPE_PLUGINS } from "@/src/lib/markdown";
 import type { TranscriptTurn } from "@/src/lib/transcript";
 import { Badge } from "@/src/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
+import { KillTaskButton } from "@/src/components/kill-task-button";
 import type { TaskDetail, TaskTranscript } from "@/src/server/dto";
 
 export const dynamic = "force-dynamic";
@@ -87,7 +88,14 @@ function TaskHeader({
           </div>
           <h1 className="font-mono text-2xl font-semibold">#{task.id}</h1>
         </div>
-        <Badge variant={badge.variant}>{badge.label}</Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant={badge.variant}>{badge.label}</Badge>
+          <KillTaskButton
+            taskId={task.id}
+            agentName={task.agentName ?? null}
+            status={task.status ?? null}
+          />
+        </div>
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-[hsl(var(--muted-foreground))]">
         <span>
