@@ -11,12 +11,10 @@ import { notFound } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 
 import { appRouter } from "@/src/server/routers/_app";
-import { taskStatusBadge } from "@/src/lib/task-status";
 import { MARKDOWN_REHYPE_PLUGINS } from "@/src/lib/markdown";
 import type { TranscriptTurn } from "@/src/lib/transcript";
-import { Badge } from "@/src/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/src/components/ui/card";
-import { KillTaskButton } from "@/src/components/kill-task-button";
+import { TaskKillControl } from "@/src/components/task-kill-control";
 import type { TaskDetail, TaskTranscript } from "@/src/server/dto";
 
 export const dynamic = "force-dynamic";
@@ -55,11 +53,9 @@ export default async function TaskDetailPage({ params }: PageProps) {
   }
   const transcript = await caller.tasks.transcript({ id });
 
-  const badge = taskStatusBadge(task.status);
-
   return (
     <div className="space-y-6">
-      <TaskHeader task={task} badge={badge} />
+      <TaskHeader task={task} />
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <div className="space-y-6">
           <PromptSection prompt={task.prompt} />
@@ -72,13 +68,7 @@ export default async function TaskDetailPage({ params }: PageProps) {
   );
 }
 
-function TaskHeader({
-  task,
-  badge,
-}: {
-  task: TaskDetail;
-  badge: { label: string; variant: "running" | "idle" | "error" | "unknown" };
-}) {
+function TaskHeader({ task }: { task: TaskDetail }) {
   return (
     <header className="space-y-2">
       <div className="flex items-start justify-between gap-3">
@@ -88,14 +78,11 @@ function TaskHeader({
           </div>
           <h1 className="font-mono text-2xl font-semibold">#{task.id}</h1>
         </div>
-        <div className="flex items-center gap-2">
-          <Badge variant={badge.variant}>{badge.label}</Badge>
-          <KillTaskButton
-            taskId={task.id}
-            agentName={task.agentName ?? null}
-            status={task.status ?? null}
-          />
-        </div>
+        <TaskKillControl
+          taskId={task.id}
+          agentName={task.agentName ?? null}
+          serverStatus={task.status ?? null}
+        />
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-[hsl(var(--muted-foreground))]">
         <span>

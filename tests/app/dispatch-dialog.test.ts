@@ -162,4 +162,50 @@ describe("<DispatchDialogView>", () => {
     expect(submitMatch).not.toBeNull();
     expect(submitMatch![0]).toMatch(/\sdisabled(=|>|\s)/);
   });
+
+  // P2-T10 — optimistic dispatch rollback contract. When the mutation
+  // fails, the form values that the user typed MUST be preserved (no
+  // silent reset) and the submit button MUST re-enable so the user can
+  // retry. This test renders the `error` state with non-empty form
+  // values and pins the contract.
+  it("preserves form values and re-enables submit on a rolled-back error state", () => {
+    const html = renderToStaticMarkup(
+      DispatchDialogView(
+        baseProps({
+          status: "error",
+          agentName: "beta",
+          prompt: "ship it",
+          model: "opus",
+          errorCode: "TIMEOUT",
+          errorMessage: "Daemon did not respond within timeout",
+        }),
+      ),
+    );
+    // Form is still rendered — no jump to a barren success branch.
+    expect(html).toContain('name="agentName"');
+    expect(html).toContain('name="prompt"');
+    // The textarea content is the preserved prompt — `<textarea>`
+    // serializes `value` as inner text, not an attribute.
+    const textareaMatch = html.match(
+      /<textarea[^>]*name="prompt"[^>]*>([\s\S]*?)<\/textarea>/,
+    );
+    expect(textareaMatch).not.toBeNull();
+    expect(textareaMatch![1]).toBe("ship it");
+    // Model `<input>` serializes `value` as an attribute.
+    const modelMatch = html.match(
+      /<input[^>]*name="model"[^>]*value="opus"[^>]*\/?>/,
+    );
+    expect(modelMatch).not.toBeNull();
+    // `beta` option must be selected — not `alpha`.
+    expect(html).toMatch(/<option[^>]*value="beta"[^>]*selected[^>]*>beta<\/option>/);
+    // Submit re-enabled — user can retry.
+    const submitMatch = html.match(
+      /<button[^>]*type="submit"[^>]*>([\s\S]*?)<\/button>/,
+    );
+    expect(submitMatch).not.toBeNull();
+    expect(submitMatch![0]).not.toMatch(/\sdisabled(=|>|\s)/);
+    // Error banner renders the typed code + message.
+    expect(html).toContain("TIMEOUT");
+    expect(html).toContain("Daemon did not respond within timeout");
+  });
 });
