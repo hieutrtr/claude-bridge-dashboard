@@ -7,8 +7,10 @@ describe("NAV_ITEMS", () => {
   // Phase 4 T02 added the Users entry at the end (owner-only page;
   // members see a forbidden banner — link is still rendered for
   // discoverability).
-  it("exports exactly 7 items in plan-defined order", () => {
-    expect(NAV_ITEMS.length).toBe(7);
+  // Phase 4 T06 added the Notifications entry (self-only page;
+  // every authenticated caller has their own preferences row).
+  it("exports exactly 8 items in plan-defined order", () => {
+    expect(NAV_ITEMS.length).toBe(8);
     expect(NAV_ITEMS.map((i) => i.label)).toEqual([
       "Agents",
       "Tasks",
@@ -17,6 +19,7 @@ describe("NAV_ITEMS", () => {
       "Cost",
       "Audit",
       "Users",
+      "Notifications",
     ]);
     expect(NAV_ITEMS.map((i) => i.href)).toEqual([
       "/agents",
@@ -26,6 +29,7 @@ describe("NAV_ITEMS", () => {
       "/cost",
       "/audit",
       "/settings/users",
+      "/settings/notifications",
     ]);
   });
 });

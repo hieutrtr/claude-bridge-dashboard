@@ -42,11 +42,15 @@
 >    ≥ 90 across `/`, `/agents`, `/tasks`, `/loops`, `/schedules`,
 >    `/cost`, `/audit`, `/users` (T07 acceptance).
 >
-> **Status:** Iter 6/16 — T05 ⌘K command palette landed (cmdk-powered
-> dialog with 14 commands across action / navigate / system groups,
-> role-aware filter, ⌘K + `?` + `g X` leader-key hotkeys, Esc focus
-> restoration, XSS-safe label contract via `assertSafeLabel`); iter
-> 7 = T06 notification preferences + email digest.
+> **Status:** Iter 7/16 — T06 notification preferences + email digest
+> landed (`notification_preferences` migration, `notifications.*`
+> router with self-only authedProcedure + DangerConfirm-wrapped
+> reset, `/settings/notifications` page with optimistic toggle UI,
+> `scripts/email-digest.ts` cron-style job using `Intl.DateTimeFormat`
+> for TZ-aware delivery, audit invariant of CHANGES KEYS ONLY +
+> `targetEmailHash` for digest sends, browser-push stub records
+> bool but defers actual delivery to v0.2.0); iter 8 = T07 mobile
+> responsive pass.
 
 ---
 

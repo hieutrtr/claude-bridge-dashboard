@@ -11,6 +11,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { label: "Cost", href: "/cost" },
   { label: "Audit", href: "/audit" },
   { label: "Users", href: "/settings/users" },
+  { label: "Notifications", href: "/settings/notifications" },
 ] as const;
 
 export function isNavActive(pathname: string, href: string): boolean {
