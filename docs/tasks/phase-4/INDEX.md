@@ -42,10 +42,11 @@
 >    ≥ 90 across `/`, `/agents`, `/tasks`, `/loops`, `/schedules`,
 >    `/cost`, `/audit`, `/users` (T07 acceptance).
 >
-> **Status:** Iter 5/16 — T04 multi-user cost view landed
-> (`analytics.costByUser` query + `/cost?tab=user` leaderboard +
-> owner/member role split + `(unattributed)` opaque bucket);
-> iter 6 = T05 ⌘K command palette.
+> **Status:** Iter 6/16 — T05 ⌘K command palette landed (cmdk-powered
+> dialog with 14 commands across action / navigate / system groups,
+> role-aware filter, ⌘K + `?` + `g X` leader-key hotkeys, Esc focus
+> restoration, XSS-safe label contract via `assertSafeLabel`); iter
+> 7 = T06 notification preferences + email digest.
 
 ---
 

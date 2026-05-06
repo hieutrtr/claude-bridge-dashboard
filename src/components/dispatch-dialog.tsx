@@ -320,20 +320,15 @@ export function DispatchDialog() {
   }, [agentName, prompt, model]);
 
   useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key !== "k" && e.key !== "K") return;
-      if (!(e.metaKey || e.ctrlKey)) return;
-      if (e.shiftKey || e.altKey) return;
-      e.preventDefault();
-      openDialog();
-    }
+    // P4-T05: ⌘K now opens the command palette, not this dialog. The
+    // palette includes a "Dispatch task to agent…" command that fires
+    // OPEN_DISPATCH_EVENT — preserving the same one-keystroke flow
+    // through a single shared hotkey owner.
     function onOpenEvent() {
       openDialog();
     }
-    window.addEventListener("keydown", onKey);
     window.addEventListener(OPEN_DISPATCH_EVENT, onOpenEvent);
     return () => {
-      window.removeEventListener("keydown", onKey);
       window.removeEventListener(OPEN_DISPATCH_EVENT, onOpenEvent);
     };
   }, [openDialog]);

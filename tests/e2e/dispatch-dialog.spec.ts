@@ -1,18 +1,25 @@
-// Phase 2 — Dispatch dialog (⌘K) opens, lists agents, closes via the
-// cancel button. The dialog reads agents through `agents.list` (a tRPC
-// query that hits the SQLite agents table directly — no daemon), so
-// the seeded `smoke-agent` is enough to exercise the happy path.
+// Phase 2 — Dispatch dialog opens, lists agents, closes via the cancel
+// button. The dialog reads agents through `agents.list` (a tRPC query
+// that hits the SQLite agents table directly — no daemon), so the
+// seeded `smoke-agent` is enough to exercise the happy path.
 //
 // Submission isn't tested here: the underlying procedure shells out to
 // the MCP daemon, which isn't running in the e2e fixture. Dialog open
 // + cancel is the read-side of the dispatch UI; happy-path POST is
 // covered by the integration test (mocked MCP client).
+//
+// P4-T05 update: ⌘K now opens the command palette (not the dispatch
+// dialog directly). The dispatch dialog is reached via the topbar
+// "Dispatch" button, which fires the same `bridge:open-dispatch`
+// custom event the palette uses — so the dialog state machine itself
+// is unchanged. The keyboard path (⌘K → palette → "Dispatch task" →
+// dialog) is covered by `command-palette.spec.ts`.
 
 import { expect, test } from "@playwright/test";
 
 import { FIXTURE_AGENT, FIXTURE_PASSWORD } from "./fixture";
 
-test("phase-2 dispatch dialog: ⌘K opens, lists agents, cancels", async ({
+test("phase-2 dispatch dialog: topbar trigger opens, lists agents, cancels", async ({
   page,
 }) => {
   // Land on the dev server origin so in-page `fetch` can resolve a
@@ -34,9 +41,9 @@ test("phase-2 dispatch dialog: ⌘K opens, lists agents, cancels", async ({
     page.getByRole("heading", { level: 1, name: "Agents" }),
   ).toBeVisible();
 
-  // ⌘K — the dialog handler accepts metaKey OR ctrlKey + 'k'.
-  // Playwright's "ControlOrMeta" maps to whichever the host OS uses.
-  await page.keyboard.press("ControlOrMeta+k");
+  // Click the topbar "Dispatch" trigger — fires the same
+  // bridge:open-dispatch event the ⌘K palette command uses.
+  await page.getByRole("button", { name: "Open dispatch dialog" }).click();
 
   const dialog = page.getByRole("dialog", { name: /dispatch task/i });
   await expect(dialog).toBeVisible();
