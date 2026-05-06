@@ -14,6 +14,7 @@ import { loopsRouter } from "./loops";
 import { permissionsRouter } from "./permissions";
 import { schedulesRouter } from "./schedules";
 import { tasksRouter } from "./tasks";
+import { usersRouter } from "./users";
 
 export const appRouter = router({
   agents: agentsRouter,
@@ -24,6 +25,7 @@ export const appRouter = router({
   permissions: permissionsRouter,
   schedules: schedulesRouter,
   tasks: tasksRouter,
+  users: usersRouter,
 });
 
 export type AppRouter = typeof appRouter;

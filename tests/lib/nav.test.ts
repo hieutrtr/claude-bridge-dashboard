@@ -4,8 +4,11 @@ import { NAV_ITEMS, isNavActive } from "../../src/lib/nav";
 
 describe("NAV_ITEMS", () => {
   // Phase 2 T05 added the Audit entry after Cost.
-  it("exports exactly 6 items in plan-defined order", () => {
-    expect(NAV_ITEMS.length).toBe(6);
+  // Phase 4 T02 added the Users entry at the end (owner-only page;
+  // members see a forbidden banner — link is still rendered for
+  // discoverability).
+  it("exports exactly 7 items in plan-defined order", () => {
+    expect(NAV_ITEMS.length).toBe(7);
     expect(NAV_ITEMS.map((i) => i.label)).toEqual([
       "Agents",
       "Tasks",
@@ -13,6 +16,7 @@ describe("NAV_ITEMS", () => {
       "Schedules",
       "Cost",
       "Audit",
+      "Users",
     ]);
     expect(NAV_ITEMS.map((i) => i.href)).toEqual([
       "/agents",
@@ -21,6 +25,7 @@ describe("NAV_ITEMS", () => {
       "/schedules",
       "/cost",
       "/audit",
+      "/settings/users",
     ]);
   });
 });
