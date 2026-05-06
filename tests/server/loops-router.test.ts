@@ -1602,3 +1602,322 @@ describe("loops.start — MCP context missing", () => {
     expect(rows(db).length).toBe(0);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────
+// P3-T4 — loops.cancel (mutation, calls bridge_loop_cancel)
+// ─────────────────────────────────────────────────────────────────────
+//
+// Same shape as approve/reject: tmp on-disk DB so the procedure can
+// resolve the loop row to derive `status` + idempotency, plus a fake
+// MCP client per test. The headline is the multi-channel race: a
+// dashboard-side cancel can land while Telegram is finalizing the
+// loop — both the server-side terminal-status check and the
+// daemon-side regex map to the same `alreadyFinalized:true` shape.
+
+describe("loops.cancel — happy path", () => {
+  it("running loop → calls bridge_loop_cancel and returns alreadyFinalized:false", async () => {
+    seedLoop(db, { loopId: "loop-c1", status: "running", pendingApproval: false });
+    const { client, calls } = fakePool(async () => ({ ok: true }));
+    const req = makeReq({ "x-forwarded-for": "5.6.7.8", "user-agent": "ua/1" }, "loops.cancel");
+
+    const caller = appRouter.createCaller({ mcp: client, userId: "owner", req });
+    const out = await caller.loops.cancel({ loopId: "loop-c1" });
+    expect(out).toEqual({ ok: true, alreadyFinalized: false });
+
+    expect(calls.length).toBe(1);
+    expect(calls[0]!.method).toBe("bridge_loop_cancel");
+    expect(calls[0]!.params).toEqual({ loop_id: "loop-c1" });
+    expect(calls[0]!.opts?.timeoutMs).toBe(15_000);
+
+    const all = rows(db);
+    expect(all.length).toBe(1);
+    expect(all[0]!.action).toBe("loop.cancel");
+    expect(all[0]!.resource_type).toBe("loop");
+    expect(all[0]!.resource_id).toBe("loop-c1");
+    expect(all[0]!.user_id).toBe("owner");
+    expect(all[0]!.ip_hash).not.toBeNull();
+    expect(all[0]!.user_agent).toBe("ua/1");
+    expect(all[0]!.request_id).toMatch(/^[0-9a-f-]{36}$/);
+    const payload = JSON.parse(all[0]!.payload_json!);
+    expect(payload).toEqual({
+      status: "running",
+      alreadyFinalized: false,
+    });
+  });
+
+  it("loop in pending_approval (still 'running') is cancellable", async () => {
+    seedLoop(db, { loopId: "loop-pa", status: "running", pendingApproval: true });
+    const { client, calls } = fakePool(async () => ({ ok: true }));
+    const caller = appRouter.createCaller({
+      mcp: client,
+      userId: "owner",
+      req: makeReq({}, "loops.cancel"),
+    });
+    const out = await caller.loops.cancel({ loopId: "loop-pa" });
+    expect(out).toEqual({ ok: true, alreadyFinalized: false });
+    expect(calls.length).toBe(1);
+  });
+});
+
+describe("loops.cancel — already finalized (server-side check, no MCP call)", () => {
+  for (const status of ["done", "cancelled", "canceled", "failed"] as const) {
+    it(`status=${status} → alreadyFinalized:true without MCP`, async () => {
+      seedLoop(db, { loopId: `loop-${status}`, status, pendingApproval: false });
+      const { client, calls } = fakePool(async () => ({ ok: true }));
+      const caller = appRouter.createCaller({
+        mcp: client,
+        userId: "owner",
+        req: makeReq({}, "loops.cancel"),
+      });
+      const out = await caller.loops.cancel({ loopId: `loop-${status}` });
+      expect(out).toEqual({ ok: true, alreadyFinalized: true });
+      expect(calls.length).toBe(0);
+
+      const all = rows(db);
+      expect(all.length).toBe(1);
+      expect(all[0]!.action).toBe("loop.cancel");
+      const payload = JSON.parse(all[0]!.payload_json!);
+      expect(payload.status).toBe(status);
+      expect(payload.alreadyFinalized).toBe(true);
+      // Race detection only fires on the daemon-error path — server-
+      // side terminal short-circuit must NOT carry that flag.
+      expect(payload.raceDetected).toBeUndefined();
+    });
+  }
+});
+
+describe("loops.cancel — daemon race (MCP_RPC_ERROR with race-pattern message)", () => {
+  const racePatterns = [
+    "loop already approved",
+    "loop already rejected",
+    "already finalized",
+    "loop not pending approval",
+    "not pending approval",
+    "already finished",
+    "already cancelled",
+    "already canceled",
+    "already done",
+  ];
+
+  for (const message of racePatterns) {
+    it(`swallows "${message}" → alreadyFinalized:true`, async () => {
+      seedLoop(db, { loopId: "loop-c-race", status: "running", pendingApproval: false });
+      const { client } = fakePool(async () => {
+        throw new McpPoolError("MCP_RPC_ERROR", message);
+      });
+      const caller = appRouter.createCaller({
+        mcp: client,
+        userId: "owner",
+        req: makeReq({}, "loops.cancel"),
+      });
+      const out = await caller.loops.cancel({ loopId: "loop-c-race" });
+      expect(out).toEqual({ ok: true, alreadyFinalized: true });
+
+      const all = rows(db);
+      expect(all.length).toBe(1);
+      expect(all[0]!.action).toBe("loop.cancel");
+      const payload = JSON.parse(all[0]!.payload_json!);
+      expect(payload.alreadyFinalized).toBe(true);
+      expect(payload.raceDetected).toBe(true);
+      expect(payload.status).toBe("running");
+    });
+  }
+
+  it("does NOT swallow generic MCP_RPC_ERROR (e.g. agent panic)", async () => {
+    seedLoop(db, { loopId: "loop-c-panic", status: "running", pendingApproval: false });
+    const { client } = fakePool(async () => {
+      throw new McpPoolError("MCP_RPC_ERROR", "daemon panic: out of memory");
+    });
+    const caller = appRouter.createCaller({
+      mcp: client,
+      userId: "owner",
+      req: makeReq({}, "loops.cancel"),
+    });
+    let caught: TRPCError | null = null;
+    try {
+      await caller.loops.cancel({ loopId: "loop-c-panic" });
+    } catch (e) {
+      caught = e as TRPCError;
+    }
+    expect(caught!.code).toBe("INTERNAL_SERVER_ERROR");
+
+    const all = rows(db);
+    expect(all.length).toBe(1);
+    expect(all[0]!.action).toBe("loop.cancel.error");
+    const payload = JSON.parse(all[0]!.payload_json!);
+    expect(payload.code).toBe("MCP_RPC_ERROR");
+    expect(payload.status).toBe("running");
+  });
+});
+
+describe("loops.cancel — loop not found", () => {
+  it("unknown loopId → NOT_FOUND, no audit row, no MCP call", async () => {
+    const { client, calls } = fakePool(async () => ({ ok: true }));
+    const caller = appRouter.createCaller({
+      mcp: client,
+      userId: "owner",
+      req: makeReq({}, "loops.cancel"),
+    });
+    let caught: TRPCError | null = null;
+    try {
+      await caller.loops.cancel({ loopId: "ghost" });
+    } catch (e) {
+      caught = e as TRPCError;
+    }
+    expect(caught!.code).toBe("NOT_FOUND");
+    expect(calls.length).toBe(0);
+    expect(rows(db).length).toBe(0);
+  });
+});
+
+describe("loops.cancel — input validation", () => {
+  it("rejects empty loopId with BAD_REQUEST", async () => {
+    const { client, calls } = fakePool(async () => ({ ok: true }));
+    const caller = appRouter.createCaller({
+      mcp: client,
+      userId: "owner",
+      req: makeReq({}, "loops.cancel"),
+    });
+    let caught: TRPCError | null = null;
+    try {
+      await caller.loops.cancel({ loopId: "" });
+    } catch (e) {
+      caught = e as TRPCError;
+    }
+    expect(caught!.code).toBe("BAD_REQUEST");
+    expect(calls.length).toBe(0);
+    expect(rows(db).length).toBe(0);
+  });
+
+  it("rejects oversize loopId (>128 chars)", async () => {
+    const { client, calls } = fakePool(async () => ({ ok: true }));
+    const caller = appRouter.createCaller({
+      mcp: client,
+      userId: "owner",
+      req: makeReq({}, "loops.cancel"),
+    });
+    let caught: TRPCError | null = null;
+    try {
+      await caller.loops.cancel({ loopId: "x".repeat(129) });
+    } catch (e) {
+      caught = e as TRPCError;
+    }
+    expect(caught!.code).toBe("BAD_REQUEST");
+    expect(calls.length).toBe(0);
+  });
+});
+
+describe("loops.cancel — MCP error mapping", () => {
+  type Case = {
+    name: string;
+    poolCode: McpPoolError["code"];
+    trpcCode: TRPCError["code"];
+  };
+  const cases: Case[] = [
+    { name: "MCP_TIMEOUT → TIMEOUT", poolCode: "MCP_TIMEOUT", trpcCode: "TIMEOUT" },
+    {
+      name: "MCP_BACKPRESSURE → TOO_MANY_REQUESTS",
+      poolCode: "MCP_BACKPRESSURE",
+      trpcCode: "TOO_MANY_REQUESTS",
+    },
+    {
+      name: "MCP_CONNECTION_LOST → INTERNAL_SERVER_ERROR",
+      poolCode: "MCP_CONNECTION_LOST",
+      trpcCode: "INTERNAL_SERVER_ERROR",
+    },
+    {
+      name: "MCP_ABORTED → CLIENT_CLOSED_REQUEST",
+      poolCode: "MCP_ABORTED",
+      trpcCode: "CLIENT_CLOSED_REQUEST",
+    },
+  ];
+
+  for (const c of cases) {
+    it(c.name, async () => {
+      seedLoop(db, { loopId: "loop-c-err", status: "running", pendingApproval: false });
+      const { client } = fakePool(async () => {
+        throw new McpPoolError(c.poolCode, "boom");
+      });
+      const caller = appRouter.createCaller({
+        mcp: client,
+        userId: "owner",
+        req: makeReq({}, "loops.cancel"),
+      });
+      let caught: TRPCError | null = null;
+      try {
+        await caller.loops.cancel({ loopId: "loop-c-err" });
+      } catch (e) {
+        caught = e as TRPCError;
+      }
+      expect(caught).toBeInstanceOf(TRPCError);
+      expect(caught!.code).toBe(c.trpcCode);
+
+      const all = rows(db);
+      expect(all.length).toBe(1);
+      expect(all[0]!.action).toBe("loop.cancel.error");
+      expect(all[0]!.resource_id).toBe("loop-c-err");
+      const payload = JSON.parse(all[0]!.payload_json!);
+      expect(payload.code).toBe(c.poolCode);
+      expect(payload.status).toBe("running");
+    });
+  }
+});
+
+describe("loops.cancel — context propagation", () => {
+  it("writes user_id=null when caller is unauthenticated", async () => {
+    seedLoop(db, { loopId: "loop-c-anon", status: "running", pendingApproval: false });
+    const { client } = fakePool(async () => ({ ok: true }));
+    const caller = appRouter.createCaller({
+      mcp: client,
+      userId: null,
+      req: makeReq({}, "loops.cancel"),
+    });
+    await caller.loops.cancel({ loopId: "loop-c-anon" });
+    expect(rows(db)[0]!.user_id).toBeNull();
+  });
+});
+
+describe("loops.cancel — MCP context missing", () => {
+  it("returns INTERNAL_SERVER_ERROR when no MCP client wired", async () => {
+    seedLoop(db, { loopId: "loop-c-no-mcp", status: "running", pendingApproval: false });
+    const caller = appRouter.createCaller({ userId: "owner", req: makeReq({}, "loops.cancel") });
+    let caught: TRPCError | null = null;
+    try {
+      await caller.loops.cancel({ loopId: "loop-c-no-mcp" });
+    } catch (e) {
+      caught = e as TRPCError;
+    }
+    expect(caught!.code).toBe("INTERNAL_SERVER_ERROR");
+    expect(rows(db).length).toBe(0);
+  });
+});
+
+describe("loops.cancel — repeated call idempotency", () => {
+  it("first cancel succeeds; second cancel (status flipped) is alreadyFinalized", async () => {
+    seedLoop(db, { loopId: "loop-c-rep", status: "running", pendingApproval: false });
+    const { client, calls } = fakePool(async () => ({ ok: true }));
+    const caller = appRouter.createCaller({
+      mcp: client,
+      userId: "owner",
+      req: makeReq({}, "loops.cancel"),
+    });
+
+    const first = await caller.loops.cancel({ loopId: "loop-c-rep" });
+    expect(first).toEqual({ ok: true, alreadyFinalized: false });
+    expect(calls.length).toBe(1);
+
+    db.prepare("UPDATE loops SET status = 'cancelled' WHERE loop_id = ?").run("loop-c-rep");
+
+    const second = await caller.loops.cancel({ loopId: "loop-c-rep" });
+    expect(second).toEqual({ ok: true, alreadyFinalized: true });
+    // No second MCP call — server-side terminal-status check short-circuited.
+    expect(calls.length).toBe(1);
+
+    const all = rows(db);
+    expect(all.length).toBe(2);
+    expect(all[0]!.action).toBe("loop.cancel");
+    expect(all[1]!.action).toBe("loop.cancel");
+    expect(JSON.parse(all[0]!.payload_json!).alreadyFinalized).toBe(false);
+    expect(JSON.parse(all[1]!.payload_json!).alreadyFinalized).toBe(true);
+  });
+});

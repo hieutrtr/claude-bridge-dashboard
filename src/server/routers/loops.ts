@@ -38,6 +38,7 @@ import { McpPoolError } from "../mcp/pool";
 import { auditFailureCode, mapMcpErrorToTrpc } from "../mcp/errors";
 import type {
   LoopApproveResult,
+  LoopCancelResult,
   LoopDetail,
   LoopIterationRow,
   LoopListPage,
@@ -203,6 +204,24 @@ const RejectInput = z.object({
   loopId: z.string().min(1).max(128),
   reason: z.string().min(1).max(1000).optional(),
 });
+
+// P3-T4 — cancel input. Same shape as approve/reject (single loop_id).
+const CancelInput = z.object({
+  loopId: z.string().min(1).max(128),
+});
+
+// Statuses that mean the daemon's loop runner has already exited; a
+// cancel against any of these is a benign no-op the same way an approve
+// against a non-pending loop is. Mirrors the multi-channel-race shape
+// (`alreadyFinalized:true`) we use for approve/reject so the dialog
+// surfaces the same "nothing to do" copy regardless of which path
+// terminated the loop.
+const TERMINAL_LOOP_STATUSES = new Set([
+  "done",
+  "cancelled",
+  "canceled",
+  "failed",
+]);
 
 const LOOP_TIMEOUT_MS = 15_000;
 
@@ -636,6 +655,106 @@ export const loopsRouter = router({
         ...auditBase,
         action: "loop.reject",
         payload: successPayload,
+      });
+      return { ok: true, alreadyFinalized: false };
+    }),
+
+  // P3-T4 — cancel a running loop via the daemon's `bridge_loop_cancel`
+  // MCP tool. Server-confirmed (no optimistic UI). Idempotent — if the
+  // loop has already reached a terminal status (done / cancelled /
+  // failed) we short-circuit with `alreadyFinalized:true` and skip the
+  // MCP call, mirroring the approve/reject early-return.
+  //
+  // Audit shape:
+  //   success → action="loop.cancel", payload={ status, alreadyFinalized }
+  //   race    → action="loop.cancel", payload={ status, alreadyFinalized:true,
+  //                                             raceDetected:true }
+  //   error   → action="loop.cancel.error", payload={ status, code }
+  cancel: publicProcedure
+    .input(CancelInput)
+    .mutation(async ({ input, ctx }): Promise<LoopCancelResult> => {
+      if (!ctx.mcp) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "MCP client not configured on tRPC context",
+        });
+      }
+
+      const row = lookupLoop(input.loopId);
+      if (!row) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "loop not found",
+        });
+      }
+
+      const auditBase = {
+        resourceType: "loop" as const,
+        resourceId: input.loopId,
+        userId: ctx.userId ?? null,
+        req: ctx.req,
+      };
+
+      // Path A — server-side terminal-status check, no MCP call.
+      // Unlike approve/reject (which key off `pending_approval`), cancel
+      // is meaningful for any non-terminal status: a running-but-not-
+      // -waiting loop is the common case.
+      if (row.status !== null && TERMINAL_LOOP_STATUSES.has(row.status)) {
+        appendAudit({
+          ...auditBase,
+          action: "loop.cancel",
+          payload: {
+            status: row.status,
+            alreadyFinalized: true,
+          },
+        });
+        return { ok: true, alreadyFinalized: true };
+      }
+
+      // Path B — call the daemon. Reuse LOOP_RACE_PATTERN so the
+      // cancel-vs-Telegram-finalization race surfaces as the same
+      // friendly `alreadyFinalized:true` rather than a 500.
+      try {
+        await ctx.mcp.call(
+          "bridge_loop_cancel",
+          { loop_id: input.loopId },
+          { timeoutMs: LOOP_TIMEOUT_MS },
+        );
+      } catch (err) {
+        if (
+          err instanceof McpPoolError &&
+          err.code === "MCP_RPC_ERROR" &&
+          LOOP_RACE_PATTERN.test(err.message)
+        ) {
+          appendAudit({
+            ...auditBase,
+            action: "loop.cancel",
+            payload: {
+              status: row.status,
+              alreadyFinalized: true,
+              raceDetected: true,
+            },
+          });
+          return { ok: true, alreadyFinalized: true };
+        }
+        appendAudit({
+          ...auditBase,
+          action: "loop.cancel.error",
+          payload: {
+            status: row.status,
+            code: auditFailureCode(err),
+          },
+        });
+        throw mapMcpErrorToTrpc(err);
+      }
+
+      appendAudit({
+        ...auditBase,
+        action: "loop.cancel",
+        payload: {
+          status: row.status,
+          alreadyFinalized: false,
+        },
       });
       return { ok: true, alreadyFinalized: false };
     }),

@@ -20,6 +20,7 @@ import {
   CardTitle,
 } from "@/src/components/ui/card";
 import { CostSparkline } from "@/src/components/cost-sparkline";
+import { LoopControls } from "@/src/components/loop-controls";
 import { loopStatusBadge } from "@/src/lib/loop-status";
 import type { LoopDetail, LoopIterationRow } from "@/src/server/dto";
 
@@ -80,6 +81,11 @@ export default async function LoopDetailPage({ params }: PageProps) {
   return (
     <div className="space-y-6">
       <Header loop={loop} />
+      <LoopControls
+        loopId={loop.loopId}
+        status={loop.status}
+        pendingApproval={loop.pendingApproval}
+      />
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <div className="space-y-6">
           <SparklineCard loop={loop} />

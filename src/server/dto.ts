@@ -251,6 +251,18 @@ export interface LoopRejectResult {
   alreadyFinalized: boolean;
 }
 
+// P3-T4 — wire shape returned by `loops.cancel`. Same idempotency
+// contract as approve/reject: a cancel against a loop that has already
+// reached a terminal status (done / cancelled / failed) — or that the
+// daemon reports as already-finalized via the race regex — comes back
+// as `alreadyFinalized:true` rather than as a 500. The dialog surfaces
+// the same "nothing to do" copy regardless of which path terminated
+// the loop.
+export interface LoopCancelResult {
+  ok: true;
+  alreadyFinalized: boolean;
+}
+
 // P3-T1 — wire shape returned by `loops.list`. Curated subset of the
 // vendored `loops` table (`src/db/schema.ts`) — column set chosen to
 // keep `/loops` table rendering self-sufficient (status badge, agent
