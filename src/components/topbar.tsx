@@ -1,5 +1,7 @@
 import { Input } from "@/src/components/ui/input";
 import { ThemeToggle } from "@/src/components/ui/theme-toggle";
+import { DispatchDialog } from "@/src/components/dispatch-dialog";
+import { DispatchTrigger } from "@/src/components/dispatch-trigger";
 
 export function Topbar() {
   return (
@@ -13,11 +15,13 @@ export function Topbar() {
           className="max-w-sm"
         />
       </div>
+      <DispatchTrigger />
       <ThemeToggle />
       <div
         aria-label="User menu placeholder"
         className="ml-2 h-8 w-8 rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--card))]"
       />
+      <DispatchDialog />
     </header>
   );
 }
