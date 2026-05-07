@@ -1,0 +1,43 @@
+# Mirror of .gitignore plus build-context bloaters that are never
+# needed inside the image. The build context goes through this filter
+# BEFORE Docker uploads it to the daemon, so trimming it here speeds
+# up `docker build` AND keeps secrets/test fixtures out of layers.
+
+# Dependencies + build output (re-installed inside the builder stage)
+node_modules
+.next
+out
+dist
+tsconfig.tsbuildinfo
+
+# Auto-generated
+next-env.d.ts
+
+# Dev / test artefacts
+playwright-report
+test-results
+tests
+docs
+*.log
+
+# Env (never bake secrets into the image — pass via env or compose)
+.env
+.env.local
+.env.*.local
+*.local
+docker/.env
+
+# Drizzle introspect temp DB
+.tmp-introspect.db
+.tmp-introspect.db-wal
+.tmp-introspect.db-shm
+
+# Editor / OS noise
+.DS_Store
+.idea
+.vscode
+
+# Git metadata (the image doesn't need history)
+.git
+.gitignore
+.github

@@ -1,0 +1,67 @@
+# @claude-bridge/dashboard — self-hosted Docker Compose template.
+# Phase 4 — T09 (v2 delta).
+#
+# Usage:
+#   cp docker/.env.example docker/.env  # then edit secrets
+#   docker compose -f docker/docker-compose.yml --env-file docker/.env up -d
+#
+# This compose runs the DASHBOARD only. The claude-bridge daemon runs
+# on the host (or in a separate container of its own — see v2 ARCH
+# §1.6 "decoupled release lanes"). Per the v2 plan delta (P4-T9):
+#   - mount ~/.claude-bridge/config.json read-only (daemon owns it)
+#   - mount ~/.claude-bridge/bridge.db read-write (dashboard writes
+#     audit_log, users, magic_links, notification_preferences,
+#     telemetry_events).
+#
+# The published port binds 127.0.0.1 ONLY — public exposure is the
+# tunnel's job (see docker/docker-compose.tunnel.example.yml or run
+# `bun run start --tunnel` outside Docker).
+
+services:
+  dashboard:
+    image: claude-bridge-dashboard:${DASHBOARD_IMAGE_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: claude-bridge-dashboard
+    restart: unless-stopped
+    init: true
+    # Loopback bind only — the host firewall stays in charge of
+    # external reach. Tunnels (cloudflared) sit in front of the
+    # forwarded port; see docs/deploy/tunnel.md.
+    ports:
+      - "127.0.0.1:${DASHBOARD_HOST_PORT:-7878}:7878"
+    environment:
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:?DASHBOARD_PASSWORD is required}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      OWNER_EMAIL: ${OWNER_EMAIL:-owner@local}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-}
+      AUDIT_IP_HASH_SALT: ${AUDIT_IP_HASH_SALT:-}
+      BRIDGE_DASHBOARD_ORIGIN: ${BRIDGE_DASHBOARD_ORIGIN:-http://127.0.0.1:7878}
+      BRIDGE_LOCALE_DEFAULT: ${BRIDGE_LOCALE_DEFAULT:-en}
+      # In-container paths — the bind mounts below land them at /data.
+      BRIDGE_DB_PATH: /data/bridge.db
+      BRIDGE_CONFIG_PATH: /data/config.json
+    volumes:
+      # Host paths default to the daemon's standard install location.
+      # Override in .env if your daemon stores state elsewhere.
+      - "${BRIDGE_HOST_CONFIG:-~/.claude-bridge/config.json}:/data/config.json:ro"
+      - "${BRIDGE_HOST_DB:-~/.claude-bridge/bridge.db}:/data/bridge.db"
+    # Drop every kernel capability — the dashboard is plain HTTP,
+    # never needs raw sockets, ptrace, mount, etc.
+    cap_drop:
+      - ALL
+    # Read-only root FS + a small tmpfs for /tmp keeps a compromised
+    # container from writing anywhere except the explicit mounts.
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://127.0.0.1:7878/login"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3

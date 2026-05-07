@@ -64,6 +64,30 @@ does not bundle the binary.
 See [`docs/deploy/tunnel.md`](docs/deploy/tunnel.md) for the install
 flow, security checklist, and troubleshooting tips.
 
+### Self-hosted via Docker Compose
+
+Prefer Docker when you want a frozen version, restart-on-reboot, or to
+ship a reproducible install to a teammate. The dashboard repo ships a
+template under `docker/`:
+
+```bash
+cp docker/.env.example docker/.env       # set DASHBOARD_PASSWORD + JWT_SECRET
+docker compose -f docker/docker-compose.yml --env-file docker/.env up -d
+```
+
+The container binds `127.0.0.1:7878`, mounts the daemon's
+`~/.claude-bridge/config.json` read-only, mounts `bridge.db`
+read-write, runs as a non-root `bun` user with capabilities dropped,
+and ships a `wget`-based healthcheck against `/login`. Upgrade is
+`git checkout <new-tag> && docker compose build && up -d`. Full
+walkthrough — including `BRIDGE_HOST_DB` overrides, troubleshooting,
+and the security checklist — in
+[`docs/deploy/docker.md`](docs/deploy/docker.md).
+
+The daemon itself runs OUTSIDE the container (host process or its own
+image). The two release lanes stay independent per
+[v2 ARCHITECTURE §1.6](https://github.com/hieutrtr/claude-bridge/blob/main/docs/web-dashboard/v2/ARCHITECTURE.md).
+
 ## Connect to the daemon
 
 The dashboard auto-discovers a local `claude-bridge` daemon by reading

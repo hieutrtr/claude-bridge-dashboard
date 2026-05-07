@@ -42,25 +42,29 @@
 >    ≥ 90 across `/`, `/agents`, `/tasks`, `/loops`, `/schedules`,
 >    `/cost`, `/audit`, `/users` (T07 acceptance).
 >
-> **Status:** Iter 9/16 — T08 cloudflared tunnel landed (v2 delta).
-> `scripts/start.ts` wraps `next start`; `--tunnel` (or alias
-> `bun run start:tunnel`) spawns `cloudflared tunnel --url
-> http://127.0.0.1:<port>` alongside the Next process and prints the
-> public `*.trycloudflare.com` URL once cloudflared yields it.
-> Refuse-to-start gates (v1 ARCH §10): `RESEND_API_KEY` +
-> `RESEND_FROM_EMAIL` + `DASHBOARD_PASSWORD` ≥ 16 chars + non-default
-> sentinel — `validateTunnelEnv` returns ALL failures so a
-> misconfigured operator fixes them in one cycle. Pure helpers
-> (`src/lib/tunnel.ts` — `parseStartArgs`, `validateTunnelEnv`,
-> `extractTunnelUrl`, `cloudflaredInstallHint`) are unit-tested
-> (`tests/lib/tunnel.test.ts`, 31 cases / 77 expects); the spawn
-> wrapper itself is verified via the manual smoke checklist in
-> `T08-cloudflared-tunnel.md`. Lifecycle is bidirectional: SIGINT
-> kills both children; either child exiting kills its peer; ENOENT
-> on `cloudflared` prints a per-platform install hint and exits 127.
-> README + `docs/deploy/tunnel.md` cover install / first-run /
-> security checklist / 5 troubleshooting entries. Iter 10 = T09
-> Docker compose template (v2 delta).
+> **Status:** Iter 10/16 — T09 Docker compose template landed (v2
+> delta). `docker/Dockerfile` ships a two-stage Bun image
+> (`oven/bun:1.1-alpine` builder + runner; `bun run build` then
+> dev-deps stripped in place). `docker/docker-compose.yml` runs the
+> single `dashboard` service: loopback bind `127.0.0.1:7878`, mounts
+> `~/.claude-bridge/config.json` read-only and `bridge.db` read-write,
+> hardened with `USER bun` (uid 1000) + `cap_drop: [ALL]` +
+> `read_only: true` + `tmpfs:/tmp` + `no-new-privileges` + `init: true`
+> + `restart: unless-stopped`. Mandatory env via `${VAR:?msg}` —
+> `DASHBOARD_PASSWORD` + `JWT_SECRET` short-circuit before container
+> creation if missing. `wget --spider /login` healthcheck (30s
+> interval, 3 retries, 20s start_period) shared between Dockerfile
+> and compose. `Dockerfile.dockerignore` (BuildKit auto-detected)
+> excludes `node_modules`, `.next`, `tests/`, `docs/`, `.env*`,
+> `.git/`. `docker/.env.example` ships placeholder secrets + Resend
+> + host-mount overrides. `docs/deploy/docker.md` covers
+> prerequisites/build/configure/run/upgrade + 6-entry troubleshooting
+> + security checklist; README "Self-hosted via Docker Compose"
+> subsection cross-links. Structural-lint via
+> `tests/lib/docker-config.test.ts` (29 cases / 47 expects) pins the
+> security invariants — no `0.0.0.0` bind, RW bridge.db mount, USER
+> bun line, `${VAR:?msg}` for both mandatory secrets, etc. No tRPC /
+> migration / UI delta. Iter 11 = T10 theme polish + AA contrast.
 
 ---
 
