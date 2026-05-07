@@ -15,6 +15,7 @@ import { notificationsRouter } from "./notifications";
 import { permissionsRouter } from "./permissions";
 import { schedulesRouter } from "./schedules";
 import { tasksRouter } from "./tasks";
+import { telemetryRouter } from "./telemetry";
 import { usersRouter } from "./users";
 
 export const appRouter = router({
@@ -27,6 +28,7 @@ export const appRouter = router({
   permissions: permissionsRouter,
   schedules: schedulesRouter,
   tasks: tasksRouter,
+  telemetry: telemetryRouter,
   users: usersRouter,
 });
 

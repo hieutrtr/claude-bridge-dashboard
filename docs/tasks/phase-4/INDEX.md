@@ -42,29 +42,32 @@
 >    ≥ 90 across `/`, `/agents`, `/tasks`, `/loops`, `/schedules`,
 >    `/cost`, `/audit`, `/users` (T07 acceptance).
 >
-> **Status:** Iter 10/16 — T09 Docker compose template landed (v2
-> delta). `docker/Dockerfile` ships a two-stage Bun image
-> (`oven/bun:1.1-alpine` builder + runner; `bun run build` then
-> dev-deps stripped in place). `docker/docker-compose.yml` runs the
-> single `dashboard` service: loopback bind `127.0.0.1:7878`, mounts
-> `~/.claude-bridge/config.json` read-only and `bridge.db` read-write,
-> hardened with `USER bun` (uid 1000) + `cap_drop: [ALL]` +
-> `read_only: true` + `tmpfs:/tmp` + `no-new-privileges` + `init: true`
-> + `restart: unless-stopped`. Mandatory env via `${VAR:?msg}` —
-> `DASHBOARD_PASSWORD` + `JWT_SECRET` short-circuit before container
-> creation if missing. `wget --spider /login` healthcheck (30s
-> interval, 3 retries, 20s start_period) shared between Dockerfile
-> and compose. `Dockerfile.dockerignore` (BuildKit auto-detected)
-> excludes `node_modules`, `.next`, `tests/`, `docs/`, `.env*`,
-> `.git/`. `docker/.env.example` ships placeholder secrets + Resend
-> + host-mount overrides. `docs/deploy/docker.md` covers
-> prerequisites/build/configure/run/upgrade + 6-entry troubleshooting
-> + security checklist; README "Self-hosted via Docker Compose"
-> subsection cross-links. Structural-lint via
-> `tests/lib/docker-config.test.ts` (29 cases / 47 expects) pins the
-> security invariants — no `0.0.0.0` bind, RW bridge.db mount, USER
-> bun line, `${VAR:?msg}` for both mandatory secrets, etc. No tRPC /
-> migration / UI delta. Iter 11 = T10 theme polish + AA contrast.
+> **Status:** Iter 12/16 — T11 telemetry opt-in landed (anonymous, no
+> PII). New migration `0005_telemetry_events.sql` ships two
+> dashboard-owned tables: `dashboard_meta` (k/v store for the install-
+> scoped `telemetry_opt_in` boolean and the lazy-generated `install_id`
+> UUID) and `telemetry_events` (append-only event log; no `user_id`
+> column by construction). Three tRPC procedures land on a new
+> `telemetryRouter`: `optInStatus`/`record` are `authedProcedure`,
+> `setOptIn`/`recent` are `ownerProcedure`. Default state OFF —
+> `record` short-circuits to `dropped_off` until the owner explicitly
+> flips the toggle. The PII scrubber (`src/lib/telemetry-pii.ts`)
+> rewrites UUIDs / hex tokens ≥ 12 chars / digit runs ≥ 6 to `[id]`,
+> strips query strings, and rejects emails / IPv4 / file-paths /
+> non-ASCII / over-128-chars; same module ships in browser + server
+> bundles. `record` does NOT audit (Phase 4 carve-out — auditing each
+> event would re-introduce the user-attribution it exists to avoid);
+> `setOptIn` audits `telemetry.opt-in-toggle` with
+> `{ enabled, changed }` payload. UI page `/settings/telemetry` is
+> owner-only with a "What we collect / What we do not collect"
+> transparency block + recent-events table (last 25 rows). Sidebar
+> nav now exposes 9 items (Telemetry last). 89 new tests across
+> `tests/lib/telemetry-pii.test.ts` (32, exhaustive matrix), `tests/
+> lib/telemetry-client.test.ts` (8, request builders + fetch seam),
+> `tests/server/telemetry-router.test.ts` (16, RBAC × 4 procedures +
+> install-id-never-echoed-in-audit) + 1 nav extension. Total suite
+> 1436 pass / 0 fail. Typecheck + build clean. Iter 13 = T12 i18n
+> scaffolding (Vietnamese + English).
 
 ---
 

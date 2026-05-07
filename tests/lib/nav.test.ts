@@ -9,8 +9,11 @@ describe("NAV_ITEMS", () => {
   // discoverability).
   // Phase 4 T06 added the Notifications entry (self-only page;
   // every authenticated caller has their own preferences row).
-  it("exports exactly 8 items in plan-defined order", () => {
-    expect(NAV_ITEMS.length).toBe(8);
+  // Phase 4 T11 added the Telemetry entry (owner-only page; non-owner
+  // authenticated users see an info banner explaining the toggle is
+  // install-wide).
+  it("exports exactly 9 items in plan-defined order", () => {
+    expect(NAV_ITEMS.length).toBe(9);
     expect(NAV_ITEMS.map((i) => i.label)).toEqual([
       "Agents",
       "Tasks",
@@ -20,6 +23,7 @@ describe("NAV_ITEMS", () => {
       "Audit",
       "Users",
       "Notifications",
+      "Telemetry",
     ]);
     expect(NAV_ITEMS.map((i) => i.href)).toEqual([
       "/agents",
@@ -30,6 +34,7 @@ describe("NAV_ITEMS", () => {
       "/audit",
       "/settings/users",
       "/settings/notifications",
+      "/settings/telemetry",
     ]);
   });
 });
