@@ -19,8 +19,14 @@ export function Topbar() {
       </div>
       <DispatchTrigger />
       <ThemeToggle />
+      {/*
+        Decorative user-menu placeholder. axe-core (T10) flags an
+        aria-label on a non-interactive <div> with no role; the
+        avatar disc is presentational only — the real menu lands in
+        v0.2.0 — so we drop the aria-label and keep it `aria-hidden`.
+      */}
       <div
-        aria-label="User menu placeholder"
+        aria-hidden="true"
         className="ml-1 hidden h-8 w-8 shrink-0 rounded-full border border-[hsl(var(--border))] bg-[hsl(var(--card))] sm:block"
       />
       <DispatchDialog />

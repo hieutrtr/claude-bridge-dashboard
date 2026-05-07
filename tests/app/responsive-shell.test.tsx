@@ -59,7 +59,18 @@ describe("<Topbar> responsive utilities", () => {
 
   it("user menu placeholder is hidden below sm (saves header width)", () => {
     const html = renderToStaticMarkup(<Topbar />);
-    expect(html).toContain('aria-label="User menu placeholder"');
-    expect(html).toMatch(/User menu placeholder[^>]*hidden[^>]*sm:block|hidden[^>]*sm:block[^>]*User menu placeholder/);
+    // P4-T10 — the placeholder is decorative; aria-label was dropped
+    // to satisfy axe-core's `aria-prohibited-attr` rule (no role on
+    // a <div>). We assert the visual contract via the rounded-full
+    // disc class + the responsive `hidden sm:block` toggle, plus
+    // `aria-hidden="true"` so screen readers skip it.
+    const placeholderTag = html.match(
+      /<div aria-hidden="true" class="[^"]*"\s*\/?>(?:<\/div>)?/,
+    );
+    expect(placeholderTag, "expected an aria-hidden placeholder <div>").not.toBeNull();
+    const tag = placeholderTag![0];
+    expect(tag).toContain("rounded-full");
+    expect(tag).toContain("hidden");
+    expect(tag).toContain("sm:block");
   });
 });
