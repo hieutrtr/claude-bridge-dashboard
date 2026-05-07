@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "bun run scripts/start.ts",
+    "start:tunnel": "bun run scripts/start.ts --tunnel",
     "typecheck": "tsc --noEmit",
     "test": "bun test tests/lib tests/app tests/server",
     "test:e2e": "playwright test --config=playwright.config.ts",

@@ -34,8 +34,35 @@ endpoint.
 ```bash
 bun run dev          # development (hot reload, default :3000)
 bun run build        # production build
-bun run start        # production server
+bun run start        # production server (localhost-only, :7878)
+bun run start --tunnel   # production + cloudflared public URL (see docs/deploy/tunnel.md)
 ```
+
+### Public access via cloudflared tunnel
+
+When you need to reach the dashboard from a phone or another network,
+add `--tunnel` to spawn a [cloudflared](https://github.com/cloudflare/cloudflared)
+ephemeral tunnel alongside `next start`. The wrapper prints a
+`*.trycloudflare.com` URL once the tunnel is live; share it with whoever
+should reach the dashboard, and tear both processes down with a single
+Ctrl-C.
+
+The flag refuses to start unless the env is safe to expose:
+
+| Env var               | Why required                                    |
+| --------------------- | ----------------------------------------------- |
+| `RESEND_API_KEY`      | Magic-link auth must be reachable               |
+| `RESEND_FROM_EMAIL`   | Resend rejects requests without a sender        |
+| `DASHBOARD_PASSWORD`  | ≥ 16 chars, not a default placeholder           |
+
+You also need `cloudflared` on your `PATH` — install via
+`brew install cloudflared` (macOS), the deb/rpm packages at
+[pkg.cloudflare.com](https://pkg.cloudflare.com/) (Linux), or
+`winget install --id Cloudflare.cloudflared` (Windows). The dashboard
+does not bundle the binary.
+
+See [`docs/deploy/tunnel.md`](docs/deploy/tunnel.md) for the install
+flow, security checklist, and troubleshooting tips.
 
 ## Connect to the daemon
 

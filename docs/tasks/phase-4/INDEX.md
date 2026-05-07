@@ -42,17 +42,25 @@
 >    ≥ 90 across `/`, `/agents`, `/tasks`, `/loops`, `/schedules`,
 >    `/cost`, `/audit`, `/users` (T07 acceptance).
 >
-> **Status:** Iter 8/16 — T07 mobile responsive pass landed
-> (`Sheet` headless drawer + focus-trap + body-scroll lock,
-> `MobileNav` hamburger trigger that auto-closes on route change,
-> Sidebar `hidden md:flex`, Topbar `sticky top-0 z-30` + 44 × 44
-> touch targets across the topbar, `scripts/lighthouse-mobile.ts`
-> production-build runner emitting per-route JSON +
-> `summary.json`, and a `tests/app/lighthouse-summary.test.ts`
-> gate that fails CI if any of the 8 audited routes drops below
-> 90 on perf / a11y / best-practices — currently 96–99 perf /
-> 98–100 a11y / 96 BP); iter 9 = T08 cloudflared tunnel via
-> `bun run start --tunnel` (v2 delta).
+> **Status:** Iter 9/16 — T08 cloudflared tunnel landed (v2 delta).
+> `scripts/start.ts` wraps `next start`; `--tunnel` (or alias
+> `bun run start:tunnel`) spawns `cloudflared tunnel --url
+> http://127.0.0.1:<port>` alongside the Next process and prints the
+> public `*.trycloudflare.com` URL once cloudflared yields it.
+> Refuse-to-start gates (v1 ARCH §10): `RESEND_API_KEY` +
+> `RESEND_FROM_EMAIL` + `DASHBOARD_PASSWORD` ≥ 16 chars + non-default
+> sentinel — `validateTunnelEnv` returns ALL failures so a
+> misconfigured operator fixes them in one cycle. Pure helpers
+> (`src/lib/tunnel.ts` — `parseStartArgs`, `validateTunnelEnv`,
+> `extractTunnelUrl`, `cloudflaredInstallHint`) are unit-tested
+> (`tests/lib/tunnel.test.ts`, 31 cases / 77 expects); the spawn
+> wrapper itself is verified via the manual smoke checklist in
+> `T08-cloudflared-tunnel.md`. Lifecycle is bidirectional: SIGINT
+> kills both children; either child exiting kills its peer; ENOENT
+> on `cloudflared` prints a per-platform install hint and exits 127.
+> README + `docs/deploy/tunnel.md` cover install / first-run /
+> security checklist / 5 troubleshooting entries. Iter 10 = T09
+> Docker compose template (v2 delta).
 
 ---
 
