@@ -28,6 +28,9 @@ next-env.d.ts
 .tmp-introspect.db-shm
 
 # Playwright (T13) — fixture lives under os.tmpdir(), but artifacts
-# from failed runs land here.
-playwright-report/
-test-results/
+# from failed runs land here. Anchor to the repo root so the
+# Phase-4 phase-test artefact directory at
+# `docs/tasks/phase-4/test-results/` (which we *do* want tracked)
+# is not swept up by the same name.
+/playwright-report/
+/test-results/

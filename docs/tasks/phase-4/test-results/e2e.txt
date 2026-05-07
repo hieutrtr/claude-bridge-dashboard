@@ -1,0 +1,22 @@
+$ playwright test --config=playwright.config.ts
+[2m[WebServer] [22m[0m[31mWatchpack Error (initial scan): Error: ETIMEDOUT: connection timed out, lstat '/Users/hieutran/OrbStack'[0m
+[2m[WebServer] [22m[0m[31mWatchpack Error (initial scan): Error: ETIMEDOUT: connection timed out, lstat '/Users/hieutran/OrbStack'[0m
+[2m[WebServer] [22m[0m[31mWatchpack Error (initial scan): Error: ETIMEDOUT: connection timed out, lstat '/Users/hieutran/OrbStack'[0m
+[2m[WebServer] [22m[0m[31mWatchpack Error (initial scan): Error: ETIMEDOUT: connection timed out, lstat '/Users/hieutran/OrbStack'[0m
+[2m[WebServer] [22m[0m[31mWatchpack Error (initial scan): Error: ETIMEDOUT: connection timed out, lstat '/Users/hieutran/OrbStack'[0m
+
+Running 11 tests using 1 worker
+
+  ✓   1 [chromium] › tests/e2e/audit-view.spec.ts:11:0 › phase-2 audit view: owner sees /audit page heading + filters (4.2s)
+  ✓   2 [chromium] › tests/e2e/command-palette.spec.ts:20:0 › ⌘K opens the command palette and 'Dispatch task' opens the dispatch dialog (5.7s)
+  ✓   3 [chromium] › tests/e2e/csrf.spec.ts:11:0 › phase-2 csrf: POST tRPC mutation without token → 403 csrf_invalid (2.0s)
+  ✓   4 [chromium] › tests/e2e/dark-mode-axe.spec.ts:114:2 › @dark-mode-axe Phase 4 — accessibility audit › dark theme is the default and audits clean across all primary routes (22.8s)
+  ✓   5 [chromium] › tests/e2e/dark-mode-axe.spec.ts:152:2 › @dark-mode-axe Phase 4 — accessibility audit › theme-toggle persists the user choice across a hard reload (7.5s)
+  ✓   6 [chromium] › tests/e2e/dispatch-dialog.spec.ts:22:0 › phase-2 dispatch dialog: topbar trigger opens, lists agents, cancels (5.1s)
+  ✓   7 [chromium] › tests/e2e/loop-flow.spec.ts:30:0 › phase-3 loop flow: start dialog → cancel via typed-prefix confirm (12.2s)
+  ✓   8 [chromium] › tests/e2e/loop-flow.spec.ts:129:0 › phase-3 loop flow: approve gate clears pending_approval (8.3s)
+  ✓   9 [chromium] › tests/e2e/rate-limit.spec.ts:20:0 › phase-2 rate-limit: burst of mutations triggers 429 (15.1s)
+  ✓  10 [chromium] › tests/e2e/schedules-flow.spec.ts:27:0 › phase-3 schedules flow: create → pause → delete with typed-name confirm (12.8s)
+  ✓  11 [chromium] › tests/e2e/smoke.spec.ts:26:0 › phase-1 smoke: login → agent → task → result (17.6s)
+
+  11 passed (2.0m)

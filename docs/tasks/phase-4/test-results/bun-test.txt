@@ -1,0 +1,35 @@
+bun test v1.3.11 (af24e281)
+
+tests/app/responsive-shell.test.tsx:
+[i18n] useT() called outside <I18nProvider> — falling back to en
+[i18n] useT() called outside <I18nProvider> — falling back to en
+[i18n] useT() called outside <I18nProvider> — falling back to en
+[i18n] useT() called outside <I18nProvider> — falling back to en
+[i18n] useT() called outside <I18nProvider> — falling back to en
+[i18n] useT() called outside <I18nProvider> — falling back to en
+
+tests/server/audit.test.ts:
+audit: payload serialise failed; recording null TypeError: JSON.stringify cannot serialize cyclic structures.
+      at sanitisePayload (/Users/hieutran/projects/bridge-bot-ts-1/claude-bridge-dashboard/src/server/audit.ts:117:17)
+      at appendAudit (/Users/hieutran/projects/bridge-bot-ts-1/claude-bridge-dashboard/src/server/audit.ts:172:23)
+      at <anonymous> (/Users/hieutran/projects/bridge-bot-ts-1/claude-bridge-dashboard/tests/server/audit.test.ts:218:5)
+
+audit: write failed; subsequent failures suppressed 171 | 
+172 |   const payloadJson = sanitisePayload(input.payload);
+173 |   const createdAt = Date.now();
+174 | 
+175 |   try {
+176 |     const stmt = db.prepare(
+                          ^
+RangeError: Cannot use a closed database
+      at prepare (bun:sqlite:345:37)
+      at appendAudit (/Users/hieutran/projects/bridge-bot-ts-1/claude-bridge-dashboard/src/server/audit.ts:176:21)
+      at <anonymous> (/Users/hieutran/projects/bridge-bot-ts-1/claude-bridge-dashboard/tests/server/audit.test.ts:247:11)
+
+[mcp-pool] [mock-mcp] crashing on request id=4
+[mcp-pool] [mock-mcp] crashing on request id=2
+
+ 1462 pass
+ 0 fail
+ 6982 expect() calls
+Ran 1462 tests across 102 files. [4.63s]

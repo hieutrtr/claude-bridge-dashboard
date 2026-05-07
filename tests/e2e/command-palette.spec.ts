@@ -47,7 +47,14 @@ test("⌘K opens the command palette and 'Dispatch task' opens the dispatch dial
 
   // Selecting "Dispatch task to agent…" closes the palette and
   // dispatches bridge:open-dispatch — the dispatch dialog opens.
-  await palette.getByText("Dispatch task to agent").click();
+  // We drive selection through the cmdk input + Enter rather than a
+  // direct click on the item: cmdk wraps Radix Dialog whose
+  // entrance animation briefly leaves pointer-events on the overlay,
+  // causing flaky pointer interception when clicking the option DOM
+  // node directly. Typing+Enter narrows to a single match (the first
+  // item is auto-selected by cmdk) and activates it deterministically.
+  await palette.getByRole("combobox").fill("Dispatch task");
+  await page.keyboard.press("Enter");
   await expect(palette).toBeHidden();
 
   const dispatch = page.getByRole("dialog", { name: /dispatch task/i });
