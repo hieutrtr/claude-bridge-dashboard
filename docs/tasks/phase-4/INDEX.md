@@ -42,32 +42,37 @@
 >    ≥ 90 across `/`, `/agents`, `/tasks`, `/loops`, `/schedules`,
 >    `/cost`, `/audit`, `/users` (T07 acceptance).
 >
-> **Status:** Iter 12/16 — T11 telemetry opt-in landed (anonymous, no
-> PII). New migration `0005_telemetry_events.sql` ships two
-> dashboard-owned tables: `dashboard_meta` (k/v store for the install-
-> scoped `telemetry_opt_in` boolean and the lazy-generated `install_id`
-> UUID) and `telemetry_events` (append-only event log; no `user_id`
-> column by construction). Three tRPC procedures land on a new
-> `telemetryRouter`: `optInStatus`/`record` are `authedProcedure`,
-> `setOptIn`/`recent` are `ownerProcedure`. Default state OFF —
-> `record` short-circuits to `dropped_off` until the owner explicitly
-> flips the toggle. The PII scrubber (`src/lib/telemetry-pii.ts`)
-> rewrites UUIDs / hex tokens ≥ 12 chars / digit runs ≥ 6 to `[id]`,
-> strips query strings, and rejects emails / IPv4 / file-paths /
-> non-ASCII / over-128-chars; same module ships in browser + server
-> bundles. `record` does NOT audit (Phase 4 carve-out — auditing each
-> event would re-introduce the user-attribution it exists to avoid);
-> `setOptIn` audits `telemetry.opt-in-toggle` with
-> `{ enabled, changed }` payload. UI page `/settings/telemetry` is
-> owner-only with a "What we collect / What we do not collect"
-> transparency block + recent-events table (last 25 rows). Sidebar
-> nav now exposes 9 items (Telemetry last). 89 new tests across
-> `tests/lib/telemetry-pii.test.ts` (32, exhaustive matrix), `tests/
-> lib/telemetry-client.test.ts` (8, request builders + fetch seam),
-> `tests/server/telemetry-router.test.ts` (16, RBAC × 4 procedures +
-> install-id-never-echoed-in-audit) + 1 nav extension. Total suite
-> 1436 pass / 0 fail. Typecheck + build clean. Iter 13 = T12 i18n
-> scaffolding (Vietnamese + English).
+> **Status:** Iter 13/16 — T12 i18n scaffolding landed (Vietnamese +
+> English). Two dictionaries (`src/i18n/messages/{en,vi}.json`) ship
+> 70 keys each across 11 namespaces (`app.*`, `nav.*`, `topbar.*`,
+> `common.*`, `login.*`, `theme.*`, `language.*`, `audit.*`, `cost.*`,
+> `users.*`, `errors.*`); parity is asserted by the `i18n-format` test
+> in both directions (every en key in vi, every vi key in en, ≥ 50
+> strings, no empty values). One i18next singleton (`src/i18n/format
+> .ts`) with `fallbackLng: "en"` + `parseMissingKeyHandler: (k) => k`
+> backs both `getServerT()` (server components, reads cookie via
+> `cookies()`) and `useT()` / `useLocale()` (client components, via
+> `<I18nProvider>` mounted at the layout root). Locale persists in a
+> `bridge_locale` cookie (1y, SameSite=Lax, NOT httpOnly — display
+> preference, not a credential); switching writes the cookie client-
+> side + `router.refresh()` re-runs SSR for the new language without
+> changing URLs (cookie strategy, not URL prefix — keeps URLs
+> bookmarkable + SEO-stable). `<LanguageSwitcher>` (native `<select>`
+> for zero-JS a11y) renders in the topbar between dispatch trigger
+> and theme toggle; matches `<ThemeToggle>` touch-target contract
+> (h-11 mobile / sm:h-9 desktop). Wired surfaces: sidebar (brand +
+> primary-nav aria-label + every nav label), mobile-nav (hamburger +
+> drawer + nav labels), topbar (switcher), login page (title +
+> subtitle + section headings + unconfigured + magic-link-disabled
+> copy). NavItem schema gained an `i18nKey` field while keeping
+> `label` (English) for back-compat with `nav.test.ts`. 32 new tests
+> across `i18n-locales.test.ts` (LOCALES + cookie + resolver + region
+> normalisation, 14 cases), `i18n-format.test.ts` (translator + curry
+> + interpolation + parity contract, 13 cases), `language-switcher.
+> test.tsx` (static markup × selected option per locale + aria + touch
+> target, 5 cases). Total suite 1462 pass / 0 fail. Typecheck + build
+> clean (First Load JS shared chunk +2 kB; per-route deltas ≤ 0.3 kB).
+> Iter 14 = T13 release docs + `v0.1.0` annotated tag.
 
 ---
 

@@ -3,6 +3,7 @@ import { DispatchDialog } from "@/src/components/dispatch-dialog";
 import { DispatchTrigger } from "@/src/components/dispatch-trigger";
 import { CommandPaletteTrigger } from "@/src/components/command-palette-trigger";
 import { MobileNav } from "@/src/components/mobile-nav";
+import { LanguageSwitcher } from "@/src/components/language-switcher";
 
 export function Topbar() {
   // P4-T05: the disabled "Search…" input was a Phase-1 placeholder for
@@ -18,6 +19,7 @@ export function Topbar() {
         <CommandPaletteTrigger />
       </div>
       <DispatchTrigger />
+      <LanguageSwitcher />
       <ThemeToggle />
       {/*
         Decorative user-menu placeholder. axe-core (T10) flags an

@@ -7,6 +7,8 @@ import { PermissionRelayToast } from "@/src/components/permission-relay-toast";
 import { Sidebar } from "@/src/components/sidebar";
 import { Topbar } from "@/src/components/topbar";
 import { CommandPalette } from "@/src/components/command-palette";
+import { I18nProvider } from "@/src/i18n/client";
+import { getServerLocale } from "@/src/i18n/server";
 import { SESSION_COOKIE, readAuthEnv, verifySession } from "@/src/lib/auth";
 import { appRouter } from "@/src/server/routers/_app";
 
@@ -47,29 +49,32 @@ async function readSession(): Promise<{
 
 export default async function RootLayout({ children }: { children: ReactNode }) {
   const { authed, role } = await readSession();
+  const locale = await getServerLocale();
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang={locale} suppressHydrationWarning>
       <body>
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="dark"
-          enableSystem={false}
-          disableTransitionOnChange
-        >
-          {authed ? (
-            <div className="flex min-h-screen">
-              <Sidebar />
-              <div className="flex min-w-0 flex-1 flex-col">
-                <Topbar />
-                <main className="flex-1 overflow-auto p-4 sm:p-6">{children}</main>
+        <I18nProvider locale={locale}>
+          <ThemeProvider
+            attribute="class"
+            defaultTheme="dark"
+            enableSystem={false}
+            disableTransitionOnChange
+          >
+            {authed ? (
+              <div className="flex min-h-screen">
+                <Sidebar />
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <Topbar />
+                  <main className="flex-1 overflow-auto p-4 sm:p-6">{children}</main>
+                </div>
+                <PermissionRelayToast />
+                <CommandPalette role={role} />
               </div>
-              <PermissionRelayToast />
-              <CommandPalette role={role} />
-            </div>
-          ) : (
-            <main className="min-h-screen">{children}</main>
-          )}
-        </ThemeProvider>
+            ) : (
+              <main className="min-h-screen">{children}</main>
+            )}
+          </ThemeProvider>
+        </I18nProvider>
       </body>
     </html>
   );

@@ -14,12 +14,14 @@ import { useEffect, useRef, useState } from "react";
 import { Sheet } from "@/src/components/ui/sheet";
 import { NAV_ITEMS, isNavActive } from "@/src/lib/nav";
 import { shouldCloseOnPathChange } from "@/src/lib/mobile-nav";
+import { useT } from "@/src/i18n/client";
 import { cn } from "@/src/lib/utils";
 
 export function MobileNav() {
   const pathname = usePathname() ?? "/";
   const [open, setOpen] = useState(false);
   const previousPath = useRef<string>(pathname);
+  const t = useT();
 
   useEffect(() => {
     if (shouldCloseOnPathChange(previousPath.current, pathname, open)) {
@@ -33,7 +35,7 @@ export function MobileNav() {
       <button
         type="button"
         data-role="mobile-nav-trigger"
-        aria-label="Open navigation menu"
+        aria-label={t("topbar.menu")}
         aria-expanded={open}
         aria-controls="mobile-nav-drawer"
         onClick={() => setOpen(true)}
@@ -51,14 +53,14 @@ export function MobileNav() {
       <Sheet
         open={open}
         onOpenChange={setOpen}
-        ariaLabel="Claude Bridge navigation"
+        ariaLabel={`${t("app.name")} ${t("nav.primary_label").toLowerCase()}`}
         side="left"
         panelClassName="w-72"
         dataRole="mobile-nav-drawer"
       >
         <nav
           id="mobile-nav-drawer"
-          aria-label="Primary navigation"
+          aria-label={t("nav.primary_label")}
           className="flex flex-col gap-1"
         >
           {NAV_ITEMS.map((item) => {
@@ -76,7 +78,7 @@ export function MobileNav() {
                     : "text-[hsl(var(--foreground))]/70 hover:bg-[hsl(var(--card))] hover:text-[hsl(var(--foreground))]",
                 )}
               >
-                {item.label}
+                {t(item.i18nKey)}
               </Link>
             );
           })}
