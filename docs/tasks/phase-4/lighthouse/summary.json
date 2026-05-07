@@ -1,0 +1,94 @@
+{
+  "generatedAt": "2026-05-07T00:05:54.929Z",
+  "routes": [
+    {
+      "slug": "root",
+      "path": "/",
+      "scores": {
+        "performance": 96,
+        "accessibility": 98,
+        "bestPractices": 96,
+        "seo": 91
+      },
+      "passed": true
+    },
+    {
+      "slug": "agents",
+      "path": "/agents",
+      "scores": {
+        "performance": 99,
+        "accessibility": 98,
+        "bestPractices": 96,
+        "seo": 91
+      },
+      "passed": true
+    },
+    {
+      "slug": "tasks",
+      "path": "/tasks",
+      "scores": {
+        "performance": 99,
+        "accessibility": 100,
+        "bestPractices": 96,
+        "seo": 91
+      },
+      "passed": true
+    },
+    {
+      "slug": "loops",
+      "path": "/loops",
+      "scores": {
+        "performance": 98,
+        "accessibility": 100,
+        "bestPractices": 96,
+        "seo": 91
+      },
+      "passed": true
+    },
+    {
+      "slug": "schedules",
+      "path": "/schedules",
+      "scores": {
+        "performance": 98,
+        "accessibility": 100,
+        "bestPractices": 96,
+        "seo": 91
+      },
+      "passed": true
+    },
+    {
+      "slug": "cost",
+      "path": "/cost",
+      "scores": {
+        "performance": 99,
+        "accessibility": 99,
+        "bestPractices": 96,
+        "seo": 91
+      },
+      "passed": true
+    },
+    {
+      "slug": "audit",
+      "path": "/audit",
+      "scores": {
+        "performance": 98,
+        "accessibility": 100,
+        "bestPractices": 96,
+        "seo": 91
+      },
+      "passed": true
+    },
+    {
+      "slug": "users",
+      "path": "/settings/users",
+      "scores": {
+        "performance": 98,
+        "accessibility": 100,
+        "bestPractices": 96,
+        "seo": 91
+      },
+      "passed": true
+    }
+  ],
+  "passedAll": true
+}

@@ -22,7 +22,7 @@ export function DispatchTrigger() {
         window.dispatchEvent(new CustomEvent(OPEN_DISPATCH_EVENT));
       }}
       aria-label="Open dispatch dialog"
-      className="gap-2"
+      className="h-11 gap-2 sm:h-9"
     >
       <span>Dispatch</span>
     </Button>

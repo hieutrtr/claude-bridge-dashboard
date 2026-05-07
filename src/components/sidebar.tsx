@@ -10,7 +10,8 @@ export function Sidebar() {
   return (
     <aside
       aria-label="Primary navigation"
-      className="flex h-screen w-56 shrink-0 flex-col border-r border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-4"
+      data-role="desktop-sidebar"
+      className="hidden h-screen w-56 shrink-0 flex-col border-r border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-4 md:flex"
     >
       <div className="mb-6 px-2 text-sm font-semibold tracking-tight">
         Claude Bridge
@@ -24,7 +25,7 @@ export function Sidebar() {
               href={item.href}
               aria-current={active ? "page" : undefined}
               className={cn(
-                "rounded-md px-3 py-2 text-sm transition-colors",
+                "flex h-11 items-center rounded-md px-3 text-sm transition-colors md:h-9",
                 active
                   ? "bg-[hsl(var(--card))] text-[hsl(var(--foreground))]"
                   : "text-[hsl(var(--foreground))]/60 hover:bg-[hsl(var(--card))] hover:text-[hsl(var(--foreground))]",

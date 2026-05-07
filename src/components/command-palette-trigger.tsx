@@ -18,10 +18,10 @@ export function CommandPaletteTrigger() {
         window.dispatchEvent(new CustomEvent(OPEN_COMMAND_PALETTE_EVENT));
       }}
       aria-label="Open command palette (Cmd+K)"
-      className="gap-2"
+      className="h-11 w-full gap-2 sm:h-9 sm:w-auto"
     >
       <span>Search</span>
-      <kbd className="rounded border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-1 font-mono text-[10px] text-[hsl(var(--muted-foreground))]">
+      <kbd className="hidden rounded border border-[hsl(var(--border))] bg-[hsl(var(--card))] px-1 font-mono text-[10px] text-[hsl(var(--muted-foreground))] sm:inline-block">
         ⌘K
       </kbd>
     </Button>

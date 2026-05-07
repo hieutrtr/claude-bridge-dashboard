@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test tests/lib tests/app tests/server",
     "test:e2e": "playwright test --config=playwright.config.ts",
+    "lighthouse:mobile": "bun run scripts/lighthouse-mobile.ts",
     "db:introspect": "bun run scripts/introspect.ts"
   },
   "dependencies": {
@@ -40,7 +41,9 @@
     "@types/node": "^20.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "chrome-launcher": "^1.2.1",
     "drizzle-kit": "^0.30.0",
+    "lighthouse": "^13.2.0",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.4.0"
   },

@@ -42,15 +42,17 @@
 >    ≥ 90 across `/`, `/agents`, `/tasks`, `/loops`, `/schedules`,
 >    `/cost`, `/audit`, `/users` (T07 acceptance).
 >
-> **Status:** Iter 7/16 — T06 notification preferences + email digest
-> landed (`notification_preferences` migration, `notifications.*`
-> router with self-only authedProcedure + DangerConfirm-wrapped
-> reset, `/settings/notifications` page with optimistic toggle UI,
-> `scripts/email-digest.ts` cron-style job using `Intl.DateTimeFormat`
-> for TZ-aware delivery, audit invariant of CHANGES KEYS ONLY +
-> `targetEmailHash` for digest sends, browser-push stub records
-> bool but defers actual delivery to v0.2.0); iter 8 = T07 mobile
-> responsive pass.
+> **Status:** Iter 8/16 — T07 mobile responsive pass landed
+> (`Sheet` headless drawer + focus-trap + body-scroll lock,
+> `MobileNav` hamburger trigger that auto-closes on route change,
+> Sidebar `hidden md:flex`, Topbar `sticky top-0 z-30` + 44 × 44
+> touch targets across the topbar, `scripts/lighthouse-mobile.ts`
+> production-build runner emitting per-route JSON +
+> `summary.json`, and a `tests/app/lighthouse-summary.test.ts`
+> gate that fails CI if any of the 8 audited routes drops below
+> 90 on perf / a11y / best-practices — currently 96–99 perf /
+> 98–100 a11y / 96 BP); iter 9 = T08 cloudflared tunnel via
+> `bun run start --tunnel` (v2 delta).
 
 ---
 
